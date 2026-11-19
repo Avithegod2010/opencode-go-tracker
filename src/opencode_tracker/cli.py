@@ -37,10 +37,24 @@ import sys
 from pathlib import Path
 
 from .csv_merger import merge_csvs
-from .db import get_conn, query_totals, query_daily, recent
+from .db import (
+    add_profile,
+    current_plan,
+    get_conn,
+    get_profile,
+    list_profiles,
+    plan_history,
+    query_totals,
+    query_daily,
+    recent,
+    remove_profile,
+    set_plan,
+    update_profile_check,
+)
 from .go_limits import monthly_limit, sync_limits
 from .logger import OpencodeLogger, load_dotenv
 from .preflight import check_key
+from .profiles import resolve_profile
 from .windows import compute_windows, period_start, week_start
 
 
@@ -153,10 +167,78 @@ def cmd_report(args):
         print(f"\nCSV log at {args.csv} ({Path(args.csv).stat().st_size} bytes)")
 
 
+def cmd_profile(args):
+    conn = get_conn(args.db)
+    try:
+        action = args.profile_cmd or "list"
+        if action == "add":
+            add_profile(
+                conn,
+                args.name,
+                args.base_url,
+                plan=args.plan,
+                key_env=args.key_env,
+                project=args.project,
+                member=args.member,
+            )
+            print(f"Profile '{args.name}' saved.")
+            print(f"  base_url: {args.base_url}")
+            print(f"  plan: {args.plan or '-'}  key_env: {args.key_env or '-'}")
+            print("Keys are never stored; put the key in that environment variable or use OPENCODE_API_KEY.")
+        elif action == "list":
+            rows = list_profiles(conn)
+            if not rows:
+                print("No profiles. Add one: opencode-tracker profile add work --base-url https://opencode.ai/inference/go --plan go --key-env OPENCODE_KEY_WORK")
+            else:
+                print(f"{'Name':<16} {'Plan':<10} {'Key env':<24} {'Last':<8} Base URL")
+                print("-" * 100)
+                for row in rows:
+                    print(f"{row['name']:<16} {(row['plan'] or '-'):<10} {(row['key_env'] or '-'):<24} {(row['last_status'] or '-'):<8} {row['base_url']}")
+        elif action == "remove":
+            if remove_profile(conn, args.name):
+                print(f"Removed profile '{args.name}'.")
+            else:
+                print(f"No profile named '{args.name}'.")
+                sys.exit(1)
+        elif action == "check":
+            try:
+                profile = resolve_profile(conn, args.name)
+            except KeyError as e:
+                print(str(e))
+                sys.exit(1)
+            if not profile["key"]:
+                print(f"No key found for '{args.name}'. Set ${args.key_env or 'OPENCODE_PROFILE_' + args.name.upper() + '_KEY'}.")
+                sys.exit(1)
+            base_url = args.base_url or profile["base_url"]
+            result = check_key(profile["key"], base_url)
+            update_profile_check(conn, args.name, "ok" if result["ok"] else (str(result["status_code"]) if result["status_code"] else "error"))
+            print(f"{args.name}: HTTP {result['status_code']}  models={result['model_count']}  Go models={result['go_model_count']}")
+            print(f"  key: {result['key_prefix']}  base: {result['base_url']}")
+            if not result["ok"]:
+                print(f"  {result['error']}")
+                if result["hint"]:
+                    print(f"  {result['hint']}")
+                sys.exit(1)
+    finally:
+        conn.close()
+
+
 def cmd_log(args):
     # Interactive single inference + log
     load_dotenv()
-    api_key = args.api_key or os.getenv("OPENCODE_API_KEY")
+    profile_name = args.profile or os.getenv("OPENCODE_PROFILE")
+    profile = None
+    if profile_name:
+        conn = get_conn(args.db)
+        try:
+            profile = resolve_profile(conn, profile_name)
+        except KeyError as e:
+            print(str(e))
+            sys.exit(1)
+        finally:
+            conn.close()
+
+    api_key = args.api_key or (profile or {}).get("key") or os.getenv("OPENCODE_API_KEY")
     if not api_key:
         print("Missing OPENCODE_API_KEY. Set in .env or env var.")
         print("Create one in Console:")
@@ -165,11 +247,24 @@ def cmd_log(args):
         print("  Permissions: Restricted -> Models: Request")
         print("Then: export OPENCODE_API_KEY=oc_sk_...  or put in .env")
         sys.exit(1)
+    base_url = (
+        args.base_url
+        or (profile or {}).get("base_url")
+        or os.getenv("OPENCODE_BASE_URL")
+        or "https://opencode.ai/inference"
+    )
+    plan = args.plan or (profile or {}).get("plan") or os.getenv("OPENCODE_PLAN")
+    member = (profile or {}).get("member") or os.getenv("OPENCODE_MEMBER")
+    project = (profile or {}).get("project") or os.getenv("OPENCODE_PROJECT")
     logger = OpencodeLogger(
         db_path=args.db,
         csv_path=args.csv,
         api_key=api_key,
-        base_url=args.base_url or os.getenv("OPENCODE_BASE_URL") or "https://opencode.ai/inference",
+        base_url=base_url,
+        profile=(profile or {}).get("name"),
+        plan=plan,
+        member=member,
+        project=project,
     )
     # Dispatch
     try:
@@ -213,11 +308,22 @@ def cmd_log(args):
 
 def cmd_sync_limits(args):
     load_dotenv()
-    api_key = args.api_key or os.getenv("OPENCODE_API_KEY")
+    profile = None
+    if getattr(args, "profile", None):
+        conn = get_conn(getattr(args, "db", "opencode_usage.db"))
+        try:
+            profile = resolve_profile(conn, args.profile)
+        except KeyError as e:
+            print(str(e))
+            sys.exit(1)
+        finally:
+            conn.close()
+    api_key = args.api_key or (profile or {}).get("key") or os.getenv("OPENCODE_API_KEY")
+    base_url = args.base_url or (profile or {}).get("base_url") or "https://opencode.ai/inference/go"
     try:
         result = sync_limits(
             api_key=api_key,
-            base_url=args.base_url,
+            base_url=base_url,
             cache_path=args.cache,
         )
     except Exception as e:
@@ -233,12 +339,22 @@ def cmd_sync_limits(args):
 
 def cmd_key_check(args):
     load_dotenv()
-    api_key = args.api_key or os.getenv("OPENCODE_API_KEY")
+    profile = None
+    if getattr(args, "profile", None):
+        conn = get_conn(getattr(args, "db", "opencode_usage.db"))
+        try:
+            profile = resolve_profile(conn, args.profile)
+        except KeyError as e:
+            print(str(e))
+            sys.exit(1)
+        finally:
+            conn.close()
+    api_key = args.api_key or (profile or {}).get("key") or os.getenv("OPENCODE_API_KEY")
     if not api_key:
         print("Missing OPENCODE_API_KEY. Put it in .env or pass --api-key.")
         print("Create one at Console: Account > Personal API keys (needs Models > Request).")
         sys.exit(1)
-    base_url = args.base_url or os.getenv("OPENCODE_BASE_URL") or "https://opencode.ai/inference/go"
+    base_url = args.base_url or (profile or {}).get("base_url") or os.getenv("OPENCODE_BASE_URL") or "https://opencode.ai/inference/go"
     if base_url == "go":
         base_url = "https://opencode.ai/inference/go"
     if base_url in ("balance", "inference"):
@@ -368,6 +484,8 @@ def build_parser():
     pl.add_argument("--stream", action="store_true", help="Stream and capture final usage (needs stream_options.include_usage)")
     pl.add_argument("--api-key", help="Override OPENCODE_API_KEY")
     pl.add_argument("--base-url", help="Override OPENCODE_BASE_URL (default https://opencode.ai/inference; Go is https://opencode.ai/inference/go)")
+    pl.add_argument("--profile", help="Named profile (base URL, plan, key env)")
+    pl.add_argument("--plan", choices=["go", "go_plus", "go-plus", "go_teams", "go-teams"], help="Plan label stored with the request")
     pl.add_argument("--db", default="opencode_usage.db", help="SQLite DB path")
     pl.add_argument("--csv", default="usage_log.csv", help="CSV log path (also written)")
     pl.add_argument("--json-out", help="Save full response JSON to file")
@@ -388,11 +506,35 @@ def build_parser():
     ps.add_argument("--api-key", help="Override OPENCODE_API_KEY")
     ps.add_argument("--base-url", default="https://opencode.ai/inference/go", help="Go base URL")
     ps.add_argument("--cache", help="Cache JSON path (default go_limits_cache.json)")
+    ps.add_argument("--profile", help="Named profile")
+    ps.add_argument("--db", default="opencode_usage.db", help="SQLite DB path for profile lookup")
 
     # key-check
     pk = sub.add_parser("key-check", help="Verify a key against the model list endpoint")
     pk.add_argument("--api-key", help="Override OPENCODE_API_KEY")
     pk.add_argument("--base-url", help="Base URL (default OPENCODE_BASE_URL or Go)")
+    pk.add_argument("--profile", help="Named profile")
+    pk.add_argument("--db", default="opencode_usage.db", help="SQLite DB path for profile lookup")
+
+    # profile
+    pp = sub.add_parser("profile", help="Manage named API key profiles (keys stay in env)")
+    psub = pp.add_subparsers(dest="profile_cmd")
+    pa = psub.add_parser("add", help="Create or update a profile")
+    pa.add_argument("name")
+    pa.add_argument("--base-url", default="https://opencode.ai/inference/go")
+    pa.add_argument("--plan", choices=["go", "go_plus", "go-plus", "go_teams", "go-teams"])
+    pa.add_argument("--key-env", help="Environment variable holding the key")
+    pa.add_argument("--project", help="Default project label")
+    pa.add_argument("--member", help="Default member label")
+    pa.add_argument("--db", default="opencode_usage.db")
+    psub.add_parser("list", help="List profiles").add_argument("--db", default="opencode_usage.db")
+    prm = psub.add_parser("remove", help="Remove a profile")
+    prm.add_argument("name")
+    prm.add_argument("--db", default="opencode_usage.db")
+    pc = psub.add_parser("check", help="Check a profile's key")
+    pc.add_argument("name")
+    pc.add_argument("--base-url", help="Override the profile base URL")
+    pc.add_argument("--db", default="opencode_usage.db")
 
     # web
     pw = sub.add_parser("web", help="Launch local website dashboard (same as python app.py)")
@@ -423,6 +565,8 @@ def main():
         cmd_sync_limits(args)
     elif args.cmd == "key-check":
         cmd_key_check(args)
+    elif args.cmd == "profile":
+        cmd_profile(args)
     elif args.cmd == "web":
         cmd_web(args)
     else:

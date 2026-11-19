@@ -144,6 +144,8 @@ pre{white-space:pre-wrap;word-break:break-word;background:#070c16;border:1px sol
 
       <div class="grid2">
         <div>
+          <label class="small">Profile <select id="profileSelect"><option value="">default (env)</option></select></label>
+          <div id="profileHint" class="small" style="margin-bottom:6px"></div>
           <label class="small">OPENCODE_API_KEY <span class="badge warn">stored only in browser localStorage if you tick save</span>
             <div style="display:flex;gap:6px"><input id="apiKey" type="password" placeholder="oc_sk_..."/><button class="btn ghost" id="toggleKey" type="button">Show</button><button class="btn ghost" id="checkKeyBtn" type="button">Check key</button></div>
           </label>
@@ -318,12 +320,13 @@ function selectedBaseUrl(){
 }
 $('#checkKeyBtn').addEventListener('click', async()=>{
   const key=keyInput.value.trim();
-  if(!key){ $('#keyCheck').innerHTML='<span class="badge warn">enter a key first</span>'; return; }
+  const profile=$('#profileSelect').value;
+  if(!key && !profile){ $('#keyCheck').innerHTML='<span class="badge warn">enter a key or choose a profile</span>'; return; }
   const base=selectedBaseUrl();
   $('#keyCheck').textContent='Checking…';
   try{
     const res=await fetch('/api/key-check', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({api_key:key, base_url:base})});
+      body: JSON.stringify({api_key:key||undefined, profile:profile||undefined, base_url:base})});
     const j=await res.json();
     if(j.ok){
       $('#keyCheck').innerHTML=`<span class="badge ok">key OK</span> ${esc(j.model_count)} models · ${esc(j.go_model_count)} Go · ${esc(j.key_prefix)}`;
@@ -338,6 +341,30 @@ if(localStorage.getItem('oc_base_url')) $('#baseUrl').value=localStorage.getItem
 $('#baseUrl').addEventListener('change',()=>{
   if($('#baseUrl').value==='custom') $('#baseUrlCustom').style.display='block';
   else { $('#baseUrlCustom').style.display='none'; localStorage.setItem('oc_base_url',$('#baseUrl').value); }
+});
+
+// Profiles: server-side key env names only; keys never leave the browser
+// unless you type one (and then only for that request).
+let PROFILES=[];
+fetch('/api/profiles').then(r=>r.json()).then(j=>{
+  PROFILES=j.profiles||[];
+  const sel=$('#profileSelect');
+  PROFILES.forEach(p=>{
+    const o=document.createElement('option');
+    o.value=p.name;
+    o.textContent=p.name + (p.plan? ' ('+p.plan+')' : '');
+    sel.appendChild(o);
+  });
+}).catch(()=>{});
+$('#profileSelect').addEventListener('change',()=>{
+  const p=PROFILES.find(x=>x.name===$('#profileSelect').value);
+  const hint=$('#profileHint');
+  if(!p){ hint.textContent=''; return; }
+  const values=[...$('#baseUrl').options].map(o=>o.value);
+  if(values.includes(p.base_url)){ $('#baseUrl').value=p.base_url; $('#baseUrlCustom').style.display='none'; }
+  else { $('#baseUrl').value='custom'; $('#baseUrlCustom').value=p.base_url; $('#baseUrlCustom').style.display='block'; }
+  hint.innerHTML=`plan <span class="mono">${esc(p.plan||'-')}</span> · member <span class="mono">${esc(p.member||'-')}</span> · project <span class="mono">${esc(p.project||'-')}</span>`
+    + (p.key_env? ` · key from <span class="mono">${esc(p.key_env)}</span>`:'');
 });
 
 // --- CSV Merger ---
@@ -427,8 +454,9 @@ $('#downloadDetailed').addEventListener('click',()=>{
 // --- Logger ---
 $('#logBtn').addEventListener('click', async()=>{
   const apiKey=keyInput.value.trim();
-  if(!apiKey){ $('#logStatus').innerHTML='<div class="alert warn">Enter OPENCODE_API_KEY (oc_sk_…). Create at Account → Personal API keys or Settings → Service accounts.</div>'; return; }
-  localStorage.setItem('oc_api_key', apiKey); // always remember for next
+  const profile=$('#profileSelect').value;
+  if(!apiKey && !profile){ $('#logStatus').innerHTML='<div class="alert warn">Enter an API key or choose a profile. Create keys at Account → Personal API keys or Settings → Service accounts.</div>'; return; }
+  if(apiKey){ localStorage.setItem('oc_api_key', apiKey); }
   const baseUrlVal=selectedBaseUrl();
   const payload={
     model: $('#logModel').value,
@@ -436,7 +464,8 @@ $('#logBtn').addEventListener('click', async()=>{
     system: $('#logSystem').value || undefined,
     api: $('#logApi').value,
     base_url: baseUrlVal,
-    api_key: apiKey,
+    profile: profile || undefined,
+    api_key: apiKey || undefined,
     max_tokens: $('#logMaxTokens').value ? parseInt($('#logMaxTokens').value) : undefined,
     stream: $('#logStream').checked
   };

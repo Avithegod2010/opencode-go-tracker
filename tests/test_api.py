@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from opencode_tracker.db import get_conn, insert_request
+from opencode_tracker.db import add_profile, get_conn, insert_request
+from opencode_tracker.logger import HttpResult
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "examples"
@@ -199,6 +200,120 @@ def test_key_check_returns_model_summary(app_module, client, monkeypatch):
     assert body["ok"] is True
     assert body["model_count"] == 27
     assert body["go_model_count"] == 27
+
+
+# --- profiles ------------------------------------------------------------
+
+LOG_PAYLOAD = {
+    "id": "chatcmpl_profile",
+    "choices": [{"message": {"content": "hi"}}],
+    "usage": {
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "cost": 0.0,
+        "opencode": {
+            "billing_source": "go",
+            "allowance": 0.05,
+            "tokens": {"input": 10, "output": 2},
+        },
+    },
+}
+
+
+def test_profiles_list_never_exposes_key(app_module, client):
+    conn = get_conn(str(app_module.DB_PATH))
+    add_profile(
+        conn,
+        "work",
+        "https://opencode.ai/inference/go",
+        plan="go",
+        key_env="OPENCODE_KEY_WORK",
+        project="tracker",
+        member="alice",
+    )
+    conn.close()
+
+    body = client.get("/api/profiles").get_json()
+    assert body["ok"] is True
+    profile = body["profiles"][0]
+    assert profile["name"] == "work"
+    assert profile["key_env"] == "OPENCODE_KEY_WORK"
+    assert "key" not in profile
+
+
+def test_log_uses_profile_metadata(app_module, client, monkeypatch):
+    conn = get_conn(str(app_module.DB_PATH))
+    add_profile(
+        conn,
+        "work",
+        "https://opencode.ai/inference/go",
+        plan="go_plus",
+        key_env="OPENCODE_KEY_WORK",
+        project="tracker",
+        member="alice",
+    )
+    conn.close()
+    monkeypatch.setenv("OPENCODE_KEY_WORK", "oc_sk_profile_key")
+    monkeypatch.setattr(
+        app_module.OpencodeLogger,
+        "_post",
+        lambda self, path, payload: HttpResult(LOG_PAYLOAD, "req_profile", None, 200, 12),
+    )
+
+    res = client.post(
+        "/api/log",
+        json={"profile": "work", "model": "kimi-k3", "message": "hi"},
+    )
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["ok"] is True
+    assert body["profile"] == "work"
+    assert body["plan"] == "go_plus"
+
+    check = get_conn(str(app_module.DB_PATH))
+    row = check.execute("SELECT * FROM requests ORDER BY id DESC LIMIT 1").fetchone()
+    assert row["profile"] == "work"
+    assert row["plan"] == "go_plus"
+    assert row["member"] == "alice"
+    assert row["project"] == "tracker"
+    assert row["http_status"] == 200
+    check.close()
+
+
+def test_log_profile_key_is_loopback_only(app_module, client, monkeypatch):
+    conn = get_conn(str(app_module.DB_PATH))
+    add_profile(conn, "work", "https://opencode.ai/inference/go", key_env="OPENCODE_KEY_WORK")
+    conn.close()
+    monkeypatch.setenv("OPENCODE_KEY_WORK", "oc_sk_profile_key")
+
+    res = client.post(
+        "/api/log",
+        json={"profile": "work", "model": "kimi-k3"},
+        environ_base={"REMOTE_ADDR": "192.168.1.9"},
+    )
+    assert res.status_code == 401
+    assert "loopback" in res.get_json()["error"]
+
+
+def test_key_check_uses_profile(app_module, client, monkeypatch):
+    conn = get_conn(str(app_module.DB_PATH))
+    add_profile(conn, "work", "https://opencode.ai/inference", key_env="OPENCODE_KEY_WORK")
+    conn.close()
+    monkeypatch.setenv("OPENCODE_KEY_WORK", "oc_sk_profile_key")
+    captured = {}
+
+    def fake_check(key, base_url):
+        captured["key"] = key
+        captured["base_url"] = base_url
+        return {"ok": True, "status_code": 200, "model_count": 1, "go_model_count": 0,
+                "go_models": [], "plans_seen": [], "error": None, "hint": None,
+                "key_prefix": "oc_sk_pr...", "base_url": base_url + "/v1/models"}
+
+    monkeypatch.setattr(app_module, "check_key", fake_check)
+    res = client.post("/api/key-check", json={"profile": "work"})
+    assert res.status_code == 200
+    assert captured["key"] == "oc_sk_profile_key"
+    assert captured["base_url"] == "https://opencode.ai/inference"
 
 
 def test_go_limits_lists_known_models(client):

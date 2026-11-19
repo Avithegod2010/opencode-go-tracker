@@ -30,6 +30,7 @@ import argparse
 import ipaddress
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 from urllib.parse import urlsplit
 
 # Ensure src on path
@@ -49,13 +50,14 @@ from werkzeug.utils import secure_filename
 
 from opencode_tracker.csv_merger import merge_csvs
 from opencode_tracker.logger import OpencodeLogger, classify_error, parse_usage
-from opencode_tracker.db import get_conn, query_totals, query_daily, recent
+from opencode_tracker.db import get_conn, list_profiles, query_totals, query_daily, recent
 from opencode_tracker.go_limits import (
     all_limits,
     load_cached_limits,
     sync_limits,
 )
 from opencode_tracker.preflight import check_key
+from opencode_tracker.profiles import profile_summary, resolve_profile
 from opencode_tracker.windows import compute_windows, period_start, week_start
 
 BASE_DIR = Path(__file__).parent
@@ -138,6 +140,16 @@ def _client_is_local() -> bool:
         return addr == "localhost"
 
 
+def _load_profile(name: Optional[str]) -> Optional[dict]:
+    if not name:
+        return None
+    conn = get_conn(str(DB_PATH))
+    try:
+        return resolve_profile(conn, name)
+    finally:
+        conn.close()
+
+
 def _validate_base_url(url: str) -> str:
     parts = urlsplit(url or "")
     if parts.scheme != "https":
@@ -192,6 +204,15 @@ def health():
         "period_start_day": PERIOD_START_DAY,
     })
 
+@app.route("/api/profiles")
+def api_profiles():
+    conn = get_conn(str(DB_PATH))
+    try:
+        rows = list_profiles(conn)
+    finally:
+        conn.close()
+    return jsonify({"ok": True, "profiles": [profile_summary(row) for row in rows]})
+
 @app.route("/api/go-limits")
 def go_limits():
     limits = all_limits()
@@ -236,7 +257,15 @@ def api_sync_limits():
 def api_key_check():
     """Verify a key against the model list endpoint without calling a model."""
     data = request.get_json(silent=True) or {}
-    base_url = data.get("base_url") or os.getenv("OPENCODE_BASE_URL") or "https://opencode.ai/inference/go"
+    profile_name = (data.get("profile") or "").strip() or None
+    profile = None
+    if profile_name:
+        try:
+            profile = _load_profile(profile_name)
+        except KeyError as e:
+            return json_error(str(e), 404)
+
+    base_url = data.get("base_url") or (profile or {}).get("base_url") or os.getenv("OPENCODE_BASE_URL") or "https://opencode.ai/inference/go"
     if base_url == "go":
         base_url = "https://opencode.ai/inference/go"
     if base_url in ("balance", "inference"):
@@ -247,14 +276,17 @@ def api_key_check():
         return json_error(f"Refusing base URL: {e}", 400)
 
     body_key = (data.get("api_key") or "").strip()
+    profile_key = (profile or {}).get("key") or ""
     env_key = (os.getenv("OPENCODE_API_KEY") or "").strip()
-    if not body_key and env_key and not _client_is_local():
-        return json_error("Non-local clients must send their own API key; the server key is used for loopback requests only.", 401)
-    api_key = body_key or env_key
+    if not body_key and (profile_key or env_key) and not _client_is_local():
+        return json_error("Non-local clients must send their own API key; server-side profile keys are used for loopback requests only.", 401)
+    api_key = body_key or profile_key or env_key
     if not api_key or not api_key.startswith("oc_sk_"):
         return json_error("Missing or invalid API key. Create one at Console: Account > Personal API keys (needs Models > Request).", 401)
 
-    return jsonify(check_key(api_key, base_url))
+    result = check_key(api_key, base_url)
+    result["profile"] = profile_name
+    return jsonify(result)
 
 @app.route("/api/merge", methods=["POST"])
 def api_merge():
@@ -458,8 +490,16 @@ def api_log():
     message = data.get("message") or "Say hi in one short sentence."
     system = data.get("system")
     api = data.get("api") or "openai"
-    base_url = data.get("base_url") or os.getenv("OPENCODE_BASE_URL") or "https://opencode.ai/inference"
+    profile_name = (data.get("profile") or "").strip() or None
+    profile = None
+    if profile_name:
+        try:
+            profile = _load_profile(profile_name)
+        except KeyError as e:
+            return json_error(str(e), 404)
+    base_url = data.get("base_url") or (profile or {}).get("base_url") or os.getenv("OPENCODE_BASE_URL") or "https://opencode.ai/inference"
     body_key = (data.get("api_key") or "").strip()
+    profile_key = (profile or {}).get("key") or ""
     env_key = (os.getenv("OPENCODE_API_KEY") or "").strip()
     max_tokens = data.get("max_tokens")
     stream = bool(data.get("stream", False))
@@ -476,21 +516,34 @@ def api_log():
     except ValueError as e:
         return json_error(f"Refusing base URL: {e}", 400)
 
-    # A server-side key from .env is for loopback use only; a LAN client must
-    # bring its own key so it cannot spend the owner's credits.
-    if not body_key and env_key and not _client_is_local():
+    # A server-side key (profile or .env) is for loopback use only; a LAN
+    # client must bring its own key so it cannot spend the owner's credits.
+    if not body_key and (profile_key or env_key) and not _client_is_local():
         return json_error(
-            "Non-local clients must send their own API key; the server key is used for loopback requests only.",
+            "Non-local clients must send their own API key; server-side keys are used for loopback requests only.",
             401,
         )
-    api_key = body_key or env_key
+    api_key = body_key or profile_key or env_key
 
     if not api_key or not api_key.startswith("oc_sk_"):
         return json_error("Missing or invalid OPENCODE_API_KEY. Create one at Console: Account > Personal API keys or Settings > Service accounts (needs Models: Request). Key looks like oc_sk_...", 401)
 
+    plan = data.get("plan") or (profile or {}).get("plan") or os.getenv("OPENCODE_PLAN")
+    member = data.get("member") or (profile or {}).get("member") or os.getenv("OPENCODE_MEMBER")
+    project = data.get("project") or (profile or {}).get("project") or os.getenv("OPENCODE_PROJECT")
+
     # Create logger (uses DB_PATH/CSV_PATH)
     try:
-        logger = OpencodeLogger(db_path=str(DB_PATH), csv_path=str(CSV_PATH), api_key=api_key, base_url=base_url)
+        logger = OpencodeLogger(
+            db_path=str(DB_PATH),
+            csv_path=str(CSV_PATH),
+            api_key=api_key,
+            base_url=base_url,
+            profile=profile_name,
+            plan=plan,
+            member=member,
+            project=project,
+        )
     except Exception as e:
         return json_error(f"Logger init failed: {e}")
 
@@ -545,6 +598,8 @@ def api_log():
         "model": model,
         "api": api,
         "base_url": base_url,
+        "profile": profile_name,
+        "plan": plan,
         "parsed": parsed,
         "preview": preview,
         "response": resp,
