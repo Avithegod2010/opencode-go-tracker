@@ -1,0 +1,13 @@
+date,model,person,cost,billing_source,allowance
+2026-10-26,kimi-k3,alice,0.00,go,0.42
+2026-10-26,glm-5.3-flash,alice,0.00,go,0.08
+2026-10-26,claude-haiku-5-5,bob,1.20,balance,0.00
+2026-10-27,kimi-k3,alice,0.00,go,1.10
+2026-10-27,gpt-6-luna,alice,0.00,go-plus,0.30
+2026-10-27,qwen3.8-flash,bob,0.05,balance,0.00
+2026-10-28,muse-spark-1.2-contributor,alice,0.00,free,0.00
+2026-10-28,kimi-k2.7-code,alice,0.00,go,0.15
+2026-10-29,kimi-k3,alice,2.40,balance,0.00
+2026-10-30,deepseek-v4.1-flash,alice,0.00,go,0.12
+2026-11-01,kimi-k3,bob,0.00,go,0.90
+2026-11-02,glm-5.3,bob,0.80,balance,0.00

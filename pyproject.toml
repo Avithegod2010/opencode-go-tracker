@@ -1,0 +1,25 @@
+[project]
+name = "opencode-go-tracker"
+version = "0.2.0"
+description = "Local tracker for OpenCode Go: CSV merger + per-request Inference API logger (cost/allowance -> SQLite/CSV)"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["requests>=2.28", "Flask>=2.3"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+opencode-tracker = "opencode_tracker.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = ["opencode_tracker"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

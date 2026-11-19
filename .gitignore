@@ -1,0 +1,14 @@
+.env
+*.db
+*.db-wal
+*.db-shm
+usage_log.csv
+*_totals.csv
+*_detailed.csv
+.pytest_cache/
+go_limits_cache.json
+*.egg-info/
+__pycache__/
+*.pyc
+.venv/
+response.json

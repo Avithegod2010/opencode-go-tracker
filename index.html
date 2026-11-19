@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Opencode Go Tracker</title>
+<style>
+  :root{--bg:#0b0f14;--panel:#111821;--panel2:#16202e;--border:#1f2e44;--text:#e6eef8;--muted:#9ab0c9;--accent:#3b82f6;--radius:14px}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;font-family:ui-sans,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial;background:radial-gradient(1200px 600px at 20% -10%,#12233a,transparent),var(--bg);color:var(--text);line-height:1.55}
+  main{max-width:920px;margin:0 auto;padding:64px 20px}
+  .badge{width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,#3b82f6,#06b6d4);display:grid;place-items:center;font-weight:800;font-size:18px}
+  h1{font-size:30px;margin:20px 0 6px;letter-spacing:-.3px}
+  .sub{color:var(--muted);margin:0 0 34px;max-width:640px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:760px){.grid{grid-template-columns:1fr}}
+  a.card{display:block;text-decoration:none;color:inherit;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:20px;transition:.15s}
+  a.card:hover{border-color:#2d4a72;transform:translateY(-2px);background:var(--panel2)}
+  .card h2{margin:0 0 6px;font-size:16px}
+  .card p{margin:0;color:var(--muted);font-size:13px}
+  .tag{display:inline-block;margin-top:12px;font-size:11px;color:#93c5fd;border:1px solid #1e3a5f;background:#0c1a2f;border-radius:999px;padding:2px 9px}
+  pre{background:#070c16;border:1px solid var(--border);border-radius:10px;padding:14px 16px;font-size:12.5px;overflow:auto}
+  .muted{color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<main>
+  <div class="badge">Go</div>
+  <h1>Opencode Go Tracker</h1>
+  <p class="sub">Local usage tracking for OpenCode Go. Nothing leaves your device except the Inference API calls you make.</p>
+
+  <div class="grid">
+    <a class="card" href="Go-Tracker.html">
+      <h2>Standalone analysis →</h2>
+      <p>Drop Console usage CSVs in the browser. Per-model totals, billing-source breakdown, daily trend, and month-scoped Go limits. No server, no install.</p>
+      <span class="tag">Go-Tracker.html</span>
+    </a>
+    <a class="card" href="http://localhost:8000">
+      <h2>Web dashboard →</h2>
+      <p>CSV merger, live inference logger, and a report with computed 5-hour / weekly / monthly Go windows. Requires <code>python app.py</code>.</p>
+      <span class="tag">http://localhost:8000</span>
+    </a>
+  </div>
+
+  <h2 style="font-size:15px;margin:34px 0 8px">CLI</h2>
+  <pre>python tracker.py report --plan go
+python tracker.py sync-limits
+python tracker.py log --model kimi-k3 --message "Say hi"
+python tracker.py csv-merge "exports/*.csv" -o totals.csv --plan go</pre>
+  <p class="muted">See README.md for the full command reference, permissions, and troubleshooting.</p>
+</main>
+</body>
+</html>

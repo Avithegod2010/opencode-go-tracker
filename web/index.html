@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<link rel="icon" href="data:,"/>
+<title>Opencode Go Tracker - CSV + Logger</title>
+<style>
+:root{--bg:#0b0f14;--panel:#111821;--panel2:#16202e;--border:#1f2e44;--text:#e6eef8;--muted:#9ab0c9;--accent:#3b82f6;--accent2:#22c55e;--warn:#f59e0b;--danger:#ef4444;--radius:14px}
+*{box-sizing:border-box}
+body{margin:0;font-family: ui-sans,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;background:var(--bg);color:var(--text);line-height:1.5}
+a{color:#60a5fa;text-decoration:none}
+a:hover{text-decoration:underline}
+header{position:sticky;top:0;z-index:10;background:rgba(11,15,20,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--border)}
+.header-inner{max-width:1200px;margin:0 auto;padding:14px 18px;display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.brand{display:flex;gap:12px;align-items:center}
+.brand-badge{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#3b82f6,#06b6d4);display:grid;place-items:center;font-weight:800}
+.brand h1{font-size:16px;margin:0;letter-spacing:.2px}
+.brand p{margin:0;font-size:12px;color:var(--muted)}
+.header-links{font-size:12px;color:var(--muted);display:flex;gap:10px;flex-wrap:wrap}
+.nav{max-width:1200px;margin:0 auto;padding:10px 18px 0;display:flex;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--border)}
+.tab-btn{appearance:none;border:1px solid transparent;background:transparent;color:var(--muted);padding:10px 14px;border-radius:10px 10px 0 0;cursor:pointer;font-weight:600;font-size:13px}
+.tab-btn.active{background:var(--panel);border-color:var(--border);border-bottom-color:var(--panel);color:var(--text)}
+.container{max-width:1200px;margin:0 auto;padding:18px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:16px}
+.card h2{margin:0 0 6px;font-size:15px}
+.card p.desc{margin:0 0 14px;color:var(--muted);font-size:13px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:900px){.grid2{grid-template-columns:1fr}}
+.drop{border:2px dashed #2a3a56;border-radius:12px;padding:22px;text-align:center;background:var(--panel2);cursor:pointer;transition:.15s}
+.drop.dragover{border-color:var(--accent);background:#0f1f36}
+.drop input{display:none}
+.controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:12px 0}
+.controls label{font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center}
+select,input[type=text],input[type=password],textarea{width:100%;background:#0b1220;border:1px solid #263554;color:var(--text);border-radius:8px;padding:8px 10px;font-size:13px}
+textarea{min-height:84px;resize:vertical}
+.btn{appearance:none;border:1px solid var(--border);background:#12233a;color:var(--text);padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:600;font-size:13px;white-space:nowrap}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:white}
+.btn.ghost{background:transparent}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;border:1px solid var(--border);color:var(--muted)}
+.badge.ok{color:#22c55e;border-color:#14532d;background:#0a1f12}
+.badge.warn{color:#f59e0b;border-color:#5a3a00;background:#1f1600}
+.badge.free{color:#94a3b8}
+.table{width:100%;border-collapse:collapse;font-size:13px}
+.table th{color:var(--muted);font-weight:600;text-align:left;border-bottom:1px solid var(--border);padding:8px 6px}
+.table td{border-bottom:1px solid #162236;padding:8px 6px}
+.table tr:hover td{background:#0f1b2e}
+.mono{font-family: ui-monospace, SFMono-Regular, Menlo, monospace}
+.kv{display:grid;grid-template-columns:140px 1fr;gap:6px;font-size:12px}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0}
+.alert{padding:10px 12px;border-radius:8px;border:1px solid; font-size:13px;margin:8px 0}
+.alert.info{border-color:#1e3a5f;background:#0c1a2f;color:#93c5fd}
+.alert.warn{background:#1f1600;border-color:#5a3a00;color:#fcd34d}
+.alert.error{background:#2a0f13;border-color:#7f1d1d;color:#fca5a5}
+details summary{cursor:pointer;color:var(--muted);font-size:12px}
+pre{white-space:pre-wrap;word-break:break-word;background:#070c16;border:1px solid var(--border);padding:10px;border-radius:8px;font-size:12px;max-height:320px;overflow:auto}
+.small{font-size:12px;color:var(--muted)}
+.flex{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.spacer{height:8px}
+</style>
+</head>
+<body>
+<header>
+  <div class="header-inner">
+    <div class="brand">
+      <div class="brand-badge">Go</div>
+      <div>
+        <h1>Opencode Go Tracker</h1>
+        <p>Billing • Go • Budgets • Inference API — local CSV merger + logger</p>
+      </div>
+    </div>
+    <div class="header-links">
+      <span>Local • keys stay in your browser / .env</span>
+      <span id="health" class="badge">checking…</span>
+    </div>
+  </div>
+</header>
+<nav class="nav">
+  <button class="tab-btn active" data-tab="merge">A. CSV Merger</button>
+  <button class="tab-btn" data-tab="logger">B. Logger</button>
+  <button class="tab-btn" data-tab="report">Report</button>
+  <button class="tab-btn" data-tab="help">Help</button>
+</nav>
+
+<div class="container">
+  <!-- MERGE TAB -->
+  <section id="tab-merge" class="tab-pane">
+    <div class="card">
+      <h2>A. CSV Merger — per-model totals</h2>
+      <p class="desc">Merge Console <b>Activity → Usage → Export usage</b> CSVs (7 / 30 / 90 days). Auto-detects <span class="mono">date, model, person, cost, billing_source, allowance</span>. Deduplicates overlapping days, aggregates per model, shows Go limit % (5h 20% / week 50% / month 100%). CLI: <span class="mono">python tracker.py csv-merge "exports/*.csv" -o totals.csv --plan go</span></p>
+
+      <div id="drop" class="drop">
+        <div style="font-weight:700">Drop CSVs here or click to choose</div>
+        <div class="small">Accepts multiple files — e.g. <span class="mono">usage_7d.csv</span> + <span class="mono">usage_30d.csv</span> + <span class="mono">usage_90d.csv</span></div>
+        <input id="fileInput" type="file" accept=".csv,text/csv" multiple />
+      </div>
+      <div id="fileList" class="small" style="margin-top:8px"></div>
+
+      <div class="controls">
+        <label>Plan <select id="mergePlan"><option value="">(no limit %)</option><option value="go">Go $10/mo</option><option value="go_plus">Go Plus $40/mo</option><option value="go_teams">Go Teams $20/member</option></select></label>
+        <label><input type="checkbox" id="mergeBillable"/> billable-only <span class="small">(like Budgets What counts: Paid & Go extra usage only; excludes free & go)</span></label>
+        <label><input type="checkbox" id="mergeDedupe" checked/> dedupe overlaps</label>
+        <button id="mergeBtn" class="btn primary">Merge</button>
+        <button id="mergeClear" class="btn ghost">Clear</button>
+      </div>
+      <div id="mergeStatus"></div>
+      <div id="mergeResult" style="display:none">
+        <div class="grid2">
+          <div>
+            <h3 style="font-size:13px;margin:8px 0">Summary</h3>
+            <div id="mergeSummary" class="mono small"></div>
+            <div class="flex" style="margin-top:8px">
+              <button id="downloadTotals" class="btn">Download totals.csv</button>
+              <button id="downloadDetailed" class="btn ghost">Download detailed.csv (for debug)</button>
+            </div>
+          </div>
+          <div>
+            <h3 style="font-size:13px;margin:8px 0">By billing_source</h3>
+            <div id="mergeBilling" class="small"></div>
+            <div id="mergeCols" class="small" style="margin-top:10px;color:var(--muted);white-space:pre-line;word-break:break-word"></div>
+          </div>
+        </div>
+        <h3 style="font-size:13px">Per-model totals</h3>
+        <div style="overflow:auto;border:1px solid var(--border);border-radius:8px">
+          <table class="table" id="mergeTable">
+            <thead><tr><th>Model</th><th style="text-align:right">Cost $</th><th style="text-align:right">Billable $</th><th style="text-align:center">Rows</th><th style="text-align:right">Limit</th><th style="text-align:right">% used</th><th style="text-align:right">5h</th><th style="text-align:right">Weekly</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="card small">
+      <b>What the CSV is:</b> Console → <b>Activity → Usage</b> breaks down cost by day/model/person; <b>Export usage</b> downloads daily totals for last 7/30/90 days. Console is free, you pay from prepaid credits (Settings → Billing) unless Go/Teams covers you. <b>What counts</b> (Budgets): Paid console models <span class="badge ok">Yes</span> · Free <span class="badge">No</span> · Go within plan <span class="badge">No</span> · Go extra usage <span class="badge ok">Yes</span> (then appears as <span class="mono">balance</span>).
+    </div>
+  </section>
+
+  <!-- LOGGER TAB -->
+  <section id="tab-logger" class="tab-pane" style="display:none">
+    <div class="card">
+      <h2>B. Logger — per-request <span class="mono">usage.cost</span> / <span class="mono">allowance</span> → SQLite/CSV</h2>
+      <p class="desc">Calls the <b>Inference API</b> (<span class="mono">Authorization: Bearer oc_sk_...</span>) and captures every response's <span class="mono">usage.cost, opencode.billing_source, list_cost, allowance, tokens{input,output,reasoning,cache_read,cache_write_5m,1h}</span> (in <span class="mono">usage</span> for OpenAI/Anthropic, <span class="mono">usageMetadata</span> for Gemini; final chunk for streams). Saved to <span class="mono" id="dbPathLabel">opencode_usage.db</span> + <span class="mono">usage_log.csv</span>. CLI: <span class="mono">python tracker.py log --model kimi-k3 --message "hi"</span></p>
+
+      <div class="grid2">
+        <div>
+          <label class="small">OPENCODE_API_KEY <span class="badge warn">stored only in browser localStorage if you tick save</span>
+            <div style="display:flex;gap:6px"><input id="apiKey" type="password" placeholder="oc_sk_..."/><button class="btn ghost" id="toggleKey" type="button">Show</button></div>
+          </label>
+          <label><input type="checkbox" id="saveKey"/> save key in this browser (localStorage)</label>
+          <div class="controls" style="margin:8px 0">
+            <label>Base URL <select id="baseUrl"><option value="https://opencode.ai/inference">Paid (balance) https://opencode.ai/inference</option><option value="https://opencode.ai/inference/go" selected>Go / Go Plus / Go Teams https://opencode.ai/inference/go</option><option value="custom">Custom…</option></select></label>
+            <input id="baseUrlCustom" type="text" placeholder="https://opencode.ai/inference/go" style="display:none"/>
+          </div>
+          <label class="small">Model
+            <select id="logModel"></select>
+          </label>
+          <label class="small">API family
+            <select id="logApi"><option value="openai">OpenAI Chat (/openai/v1/chat/completions) — most Go models</option><option value="responses">OpenAI Responses (/openai/v1/responses) — GPT</option><option value="anthropic">Anthropic (/anthropic/v1/messages) — Claude/Qwen/MiniMax</option><option value="gemini">Gemini (/google/v1beta/models/…:generateContent)</option></select>
+          </label>
+          <label class="small">System (OpenAI only) <textarea id="logSystem" rows="2" placeholder="You are a helpful assistant"></textarea></label>
+        </div>
+        <div>
+          <label class="small">Message (user) <textarea id="logMessage" rows="4">Say hi in one short sentence.</textarea></label>
+          <div class="flex">
+            <label class="small">Max tokens <input id="logMaxTokens" type="text" placeholder="1024" style="width:90px"/></label>
+            <label><input type="checkbox" id="logStream"/> Stream (needs stream_options.include_usage)</label>
+          </div>
+          <div class="alert info small">Keys: <b>Personal</b> = Account → Personal API keys (acts as you). <b>Service account</b> = Settings → Service accounts (CI). Needs <b>Permissions: Restricted → Models: Request</b>. <b>Usage:Read</b> is separate if you poll usage later. Go models also need same key, just change Base URL to <span class="mono">/inference/go</span> and run <span class="mono">/connect</span> → <span class="mono">opencode-go/model</span> in TUI. Extra Usage toggle on Go page makes over-limit Go fall back to balance (<span class="mono">billing_source=balance</span>).</div>
+          <button id="logBtn" class="btn primary" style="width:100%">Send & Log → DB/CSV</button>
+          <div id="logStatus"></div>
+        </div>
+      </div>
+
+      <div id="logResult" style="display:none;margin-top:12px">
+        <div class="grid2">
+          <div class="card" style="margin:0;background:var(--panel2)">
+            <h3 style="font-size:13px">Parsed usage</h3>
+            <dl class="kv" id="logParsed"></dl>
+          </div>
+          <div class="card" style="margin:0;background:var(--panel2)">
+            <h3 style="font-size:13px">Assistant preview</h3>
+            <pre id="logPreview" style="max-height:160px"></pre>
+          </div>
+        </div>
+        <details style="margin-top:8px"><summary>Raw response JSON (and request)</summary><pre id="logRaw"></pre></details>
+        <div class="small" style="margin-top:6px">Also appended to SQLite + CSV — see <b>Report</b> tab.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- REPORT TAB -->
+  <section id="tab-report" class="tab-pane" style="display:none">
+    <div class="card">
+      <h2>Report — DB & Go %</h2>
+      <p class="desc">Reads <span class="mono" id="reportDbPath">opencode_usage.db</span> / <span class="mono">usage_log.csv</span>. Shows per-model+billing totals, daily spark, recent 10, and Go % vs monthly limit (Go / Go Plus / Go Teams). CLI: <span class="mono">python tracker.py report --db opencode_usage.db --plan go</span></p>
+      <div class="controls">
+        <button id="reportRefresh" class="btn primary">Refresh</button>
+        <label>Plan <select id="reportPlan"><option value="">(no %)</option><option value="go">Go</option><option value="go_plus">Go Plus</option><option value="go_teams">Go Teams</option></select></label>
+        <label>Period start day <input type="number" id="reportPeriodDay" min="1" max="31" value="1" style="width:64px;background:#0b1220;border:1px solid #263554;color:var(--text);border-radius:8px;padding:8px 10px;font-size:13px"/></label>
+        <span id="reportTotals" class="badge"></span>
+      </div>
+      <div id="reportStatus"></div>
+      <div id="reportContent" style="display:none">
+        <h3 style="font-size:13px">Per-model + billing_source</h3>
+        <div style="overflow:auto;border:1px solid var(--border);border-radius:8px">
+          <table class="table" id="reportTable"><thead><tr><th>Model</th><th>Source</th><th style="text-align:center">N</th><th style="text-align:right">Cost $</th><th style="text-align:right">Allowance $</th><th style="text-align:right">List $</th></tr></thead><tbody></tbody></table>
+        </div>
+        <div id="reportGo" class="small" style="margin-top:8px"></div>
+        <h3 style="font-size:13px;margin-top:14px">Daily</h3>
+        <table class="table" id="reportDaily"><thead><tr><th>Day</th><th style="text-align:right">Cost $</th><th style="text-align:right">Allowance $</th><th style="text-align:center">N</th></tr></thead><tbody></tbody></table>
+        <h3 style="font-size:13px;margin-top:14px">Recent requests</h3>
+        <div style="overflow:auto;border:1px solid var(--border);border-radius:8px;max-height:320px">
+          <table class="table" id="reportRecent"><thead><tr><th>Time</th><th>Model</th><th>Source</th><th>Cost</th><th>Allow</th><th>Tokens</th><th>Status</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HELP TAB -->
+  <section id="tab-help" class="tab-pane" style="display:none">
+    <div class="card">
+      <h2>How to use — Billing / Go / Budgets / API</h2>
+      <div class="grid2 small">
+        <div>
+          <h3>Billing</h3>
+          <ul>
+            <li><b>Settings → Billing</b>: Payment method (Card/Link/Alipay/UPI/WeChat Pay), Add credits ($10/50/100 + 4.6%+$0.31 fee), Auto-recharge, check balance.</li>
+            <li><b>Activity</b>: Billing card (owners/admins), header <b>B</b> drawer with live Go limits/credits/usage (members see own).</li>
+            <li><b>Invoices</b>: every payment → <b>Download invoice / View receipt</b>. Entries: Balance top-up, Automatic top-up, Go subscription/renewal/Plus upgrade/Teams upgrade/member, Monthly Usage. Go renewals & credits share same invoice list.</li>
+            <li>Balance never negative — paid requests fail <span class="mono">402 Insufficient account funds</span> at 0.</li>
+            <li>Invoiced billing (on request) draws on credit limit, invoice on 1st UTC due 14d, 402 when limit/overdue.</li>
+          </ul>
+          <h3>Go</h3>
+          <ul>
+            <li>Go $10/mo, Go Plus $40/mo, Go Teams $20/member/mo. Go/Plus single-member; Teams per-member limits ($5 higher vs Go on every model). Member joins mid-period = full $20 + full allowance.</li>
+            <li>Per-model monthly $ limits: e.g. GLM-5.3-Flash $60/$180/$65, Kimi K3 $15/$60/$20, DeepSeek V4.1 Flash $100/$200/$105. Table in app fetches live from <span class="mono">/api/go-limits</span>.</li>
+            <li>Windows: <b>5h 20%</b> / <b>weekly 50%</b> / <b>monthly 100%</b> of monthly limit. Response field <span class="mono">opencode.allowance</span> counts toward that.</li>
+            <li><b>Extra Usage</b> toggle on Go page: when limit hit, fall back to pay-as-you-go balance instead of blocking (Go Teams on by default). Then <span class="mono">billing_source=balance</span> with <span class="mono">cost>0</span>.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>Budgets</h3>
+          <ul>
+            <li>Controls → Add policy. Entire workspace / All members / tagged / specific. $0 blocks. Resets 1st 00:00 UTC. Already-incurred spend counts.</li>
+            <li><b>What counts</b>: Paid Console models <b>Yes</b>, BYOK with price <b>Yes</b>, Web search Yes, Free <b>No</b>, Go within plan <b>No</b>, Go extra usage <b>Yes</b>.</li>
+            <li>When hit: <span class="mono">429 Policy budget exceeded</span> (check Activity → Logs for policy). In-progress requests may overshoot.</li>
+            <li>Track spend: My usage (Activity Overview), or Activity → Usage by day/model/person, <b>Export usage</b> CSV 7/30/90d — that CSV is what the Merger tab consumes.</li>
+          </ul>
+          <h3>Inference API & Keys</h3>
+          <ul>
+            <li>Every response reports <span class="mono">usage.cost, opencode.billing_source, list_cost, allowance, tokens{input,output,reasoning,cache_read,cache_write_5m,1h}</span> (usage for OpenAI/Anthropic, usageMetadata for Gemini).</li>
+            <li>Cost known before balance/Go counters update — you pay less than reported if you run out mid-request, never more.</li>
+            <li><b>Personal API keys</b> (any member, Account → Personal API keys) act as you; <b>Service account keys</b> (owners/admins, Settings → Service accounts) act as service account (good for CI). Both <span class="mono">Bearer oc_sk_...</span>, bound to workspace at creation. No workspace header. Full key shown once. Expiration 1/7/30/custom or never. Leaving workspace revokes your keys.</li>
+            <li>Permissions per key: <b>All</b> / <b>Restricted</b> / <b>Read only</b>. For this tracker: <b>Restricted → Models: Request</b> (to call models). <b>Usage:Read</b> only if you later poll usage via API. No key can do SSO/workspace-delete. Service accounts can't invite/manage billing/etc even with All. Revoke via Account or Members / Service accounts pages (or owner).</li>
+            <li>Use <span class="mono">x-opencode-session</span> stable session header for Go routing/cache.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="alert info small" style="margin-top:10px">This dashboard is local. API keys typed in Logger tab optionally persist in <span class="mono">localStorage</span> only on your device. Prefer <span class="mono">.env</span> for CLI: <span class="mono">OPENCODE_API_KEY=oc_sk_…</span>, <span class="mono">OPENCODE_BASE_URL</span>. Also see <span class="mono">tracker.py --help</span> & <span class="mono">README.md</span>.</div>
+    </div>
+  </section>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+// Escape untrusted CSV/API values before they enter innerHTML.
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// Tabs
+$$('.tab-btn').forEach(b=>{
+  b.addEventListener('click',()=>{
+    $$('.tab-btn').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    $$('.tab-pane').forEach(p=>p.style.display='none');
+    $('#tab-'+b.dataset.tab).style.display='block';
+    if(b.dataset.tab==='report') loadReport();
+  });
+});
+
+// Health
+fetch('/api/health').then(r=>r.json()).then(j=>{
+  $('#health').textContent = j.db_exists ? 'DB ready' : 'no DB yet';
+  $('#health').className = 'badge ' + (j.db_exists?'ok':'');
+  $('#dbPathLabel').textContent = j.db_exists ? 'opencode_usage.db' : 'opencode_usage.db (not yet created)';
+  $('#reportDbPath').textContent = j.db_exists ? 'opencode_usage.db' : 'opencode_usage.db (not yet)';
+}).catch(()=>{$('#health').textContent='offline';});
+
+// Populate models from go-limits
+let MODELS=[];
+fetch('/api/go-limits').then(r=>r.json()).then(j=>{
+  MODELS = Object.keys(j.limits).sort();
+  const sel=$('#logModel');
+  sel.innerHTML='';
+  MODELS.forEach(m=>{
+    const o=document.createElement('option');
+    o.value=m; o.textContent=m + ' — limit Go $' + (j.limits[m].go ?? 'Unl');
+    sel.appendChild(o);
+  });
+  // defaults
+  sel.value='kimi-k3';
+});
+
+// Persist key
+const keyInput=$('#apiKey');
+const saveCb=$('#saveKey');
+if(localStorage.getItem('oc_api_key')){ keyInput.value=localStorage.getItem('oc_api_key'); saveCb.checked=true; }
+saveCb.addEventListener('change',()=>{ if(saveCb.checked) localStorage.setItem('oc_api_key', keyInput.value); else localStorage.removeItem('oc_api_key'); });
+keyInput.addEventListener('input',()=>{ if(saveCb.checked) localStorage.setItem('oc_api_key', keyInput.value); });
+$('#toggleKey').addEventListener('click',()=>{
+  keyInput.type = keyInput.type==='password' ? 'text' : 'password';
+  $('#toggleKey').textContent = keyInput.type==='password' ? 'Show' : 'Hide';
+});
+if(localStorage.getItem('oc_base_url')) $('#baseUrl').value=localStorage.getItem('oc_base_url') || 'https://opencode.ai/inference/go';
+$('#baseUrl').addEventListener('change',()=>{
+  if($('#baseUrl').value==='custom') $('#baseUrlCustom').style.display='block';
+  else { $('#baseUrlCustom').style.display='none'; localStorage.setItem('oc_base_url',$('#baseUrl').value); }
+});
+
+// --- CSV Merger ---
+const drop=$('#drop'), fileInput=$('#fileInput'), fileListEl=$('#fileList');
+let chosenFiles=[];
+function renderFileList(){
+  if(!chosenFiles.length){ fileListEl.textContent='No files chosen'; return; }
+  fileListEl.innerHTML = chosenFiles.map(f=> `<span class="badge">${esc(f.name)} ${(f.size/1024).toFixed(1)} KB</span>`).join(' ');
+}
+drop.addEventListener('click',()=> fileInput.click());
+drop.addEventListener('dragover',e=>{e.preventDefault(); drop.classList.add('dragover')});
+drop.addEventListener('dragleave',()=> drop.classList.remove('dragover'));
+drop.addEventListener('drop',e=>{
+  e.preventDefault(); drop.classList.remove('dragover');
+  chosenFiles = [...e.dataTransfer.files].filter(f=>f.name.endsWith('.csv'));
+  renderFileList();
+});
+fileInput.addEventListener('change',()=>{
+  chosenFiles=[...fileInput.files];
+  renderFileList();
+});
+$('#mergeClear').addEventListener('click',()=>{ chosenFiles=[]; fileInput.value=''; renderFileList(); $('#mergeResult').style.display='none'; $('#mergeStatus').innerHTML=''; });
+let lastTotalsCsv='', lastDetailedCsv='';
+$('#mergeBtn').addEventListener('click', async()=>{
+  if(!chosenFiles.length){ $('#mergeStatus').innerHTML='<div class="alert warn">Choose at least one CSV first. Export via Console: Activity → Usage → Export usage (7/30/90d).</div>'; return; }
+  $('#mergeBtn').disabled=true; $('#mergeBtn').textContent='Merging…';
+  $('#mergeStatus').innerHTML='<div class="alert info">Uploading and merging…</div>';
+  const fd=new FormData();
+  chosenFiles.forEach(f=> fd.append('files', f));
+  fd.append('plan', $('#mergePlan').value);
+  fd.append('billable_only', $('#mergeBillable').checked ? 'true':'false');
+  fd.append('dedupe', $('#mergeDedupe').checked ? 'true':'false');
+  try{
+    const res=await fetch('/api/merge', {method:'POST', body: fd});
+    const j=await res.json();
+    if(!res.ok || !j.ok) throw new Error(j.error || res.statusText);
+    // render
+    lastTotalsCsv=j.totals_csv;
+    lastDetailedCsv=j.detailed_csv||'';
+    $('#mergeStatus').innerHTML=`<div class="alert info">Merged ${j.files.length} file(s) • rows ${j.rows_before} → ${j.rows_after} after dedupe (${j.dupes_removed} duplicates removed) → ${j.rows_filtered} after filter • Shown cost $${j.total_cost.toFixed(4)} • Billable $${j.total_billable.toFixed(4)} • Allowance sum $${j.total_allowance.toFixed(4)} ${j.plan? ' • plan '+esc(j.plan) : ''}</div>`;
+    $('#mergeSummary').innerHTML = `Shown rows: <b>$${j.total_cost.toFixed(4)}</b>`
+      + `<br>Billable (Budgets What counts): <b>$${j.total_billable.toFixed(4)}</b>`
+      + `<br>Allowance: <b>$${j.total_allowance.toFixed(4)}</b>`
+      + (j.billable_only ? `<br><span class="small">All sources before filter: $${j.total_cost_all.toFixed(4)} (billable $${j.total_billable_all.toFixed(4)}, allowance $${j.total_allowance_all.toFixed(4)})</span>` : '')
+      + `<br><span class="small">Range derived from files</span>`;
+    // billing
+    let bHtml='<table class="table"><thead><tr><th>Source</th><th style="text-align:right">Cost $</th><th>Counts?</th></tr></thead><tbody>';
+    for(const [src,amt] of Object.entries(j.per_billing)){
+      const counts = (src==='balance'||src==='byok')?'Yes': (src==='unknown'?'Yes?':'No');
+      bHtml+=`<tr><td><span class="mono">${esc(src)}</span></td><td style="text-align:right">$${amt.toFixed(4)}</td><td><span class="badge ${counts==='Yes'?'ok':''}">${counts}</span></td></tr>`;
+    }
+    bHtml+='</tbody></table>';
+    $('#mergeBilling').innerHTML=bHtml;
+    const colLines = Object.entries(j.detected_cols).map(([path, map]) => {
+      const name = path.split(/[\\/]/).pop();
+      const cols = Object.entries(map).filter(([, v]) => v).map(([logical, header]) => `${logical}=${header}`).join(', ');
+      return `  ${name}: ${cols}`;
+    }).join('\n');
+    $('#mergeCols').textContent = 'Detected columns\n' + colLines;
+    const tbody=$('#mergeTable tbody'); tbody.innerHTML='';
+    j.per_model.forEach(mr=>{
+      const tr=document.createElement('tr');
+      const lim = mr.monthly_limit ?? '';
+      const pct = mr.pct_month!=null ? mr.pct_month.toFixed(1)+'%' : '-';
+      tr.innerHTML=`<td class="mono">${esc(mr.model)}</td><td style="text-align:right">$${mr.cost.toFixed(4)}</td><td style="text-align:right">$${mr.billable_cost.toFixed(4)}</td><td style="text-align:center">${mr.rows}</td><td style="text-align:right">${lim? '$'+lim : 'Unl.'}</td><td style="text-align:right">${pct}</td><td style="text-align:right">${mr['5h_limit']? '$'+Math.round(mr['5h_limit']):'-'}</td><td style="text-align:right">${mr.weekly_limit? '$'+Math.round(mr.weekly_limit):'-'}</td>`;
+      tbody.appendChild(tr);
+    });
+    $('#mergeResult').style.display='block';
+  }catch(e){
+    $('#mergeStatus').innerHTML=`<div class="alert error">${esc(e.message)}</div>`;
+  }finally{
+    $('#mergeBtn').disabled=false; $('#mergeBtn').textContent='Merge';
+  }
+});
+$('#downloadTotals').addEventListener('click',()=>{
+  if(!lastTotalsCsv) return;
+  const blob=new Blob([lastTotalsCsv],{type:'text/csv'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='totals.csv'; a.click();
+});
+// detailed download: deduped + filtered rows used for the sums
+$('#downloadDetailed').addEventListener('click',()=>{
+  if(!lastDetailedCsv) return;
+  const blob=new Blob([lastDetailedCsv],{type:'text/csv'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='detailed.csv'; a.click();
+});
+
+// --- Logger ---
+$('#logBtn').addEventListener('click', async()=>{
+  const apiKey=keyInput.value.trim();
+  if(!apiKey){ $('#logStatus').innerHTML='<div class="alert warn">Enter OPENCODE_API_KEY (oc_sk_…). Create at Account → Personal API keys or Settings → Service accounts.</div>'; return; }
+  localStorage.setItem('oc_api_key', apiKey); // always remember for next
+  const baseUrlVal=$('#baseUrl').value==='custom' ? $('#baseUrlCustom').value.trim() : $('#baseUrl').value;
+  const payload={
+    model: $('#logModel').value,
+    message: $('#logMessage').value,
+    system: $('#logSystem').value || undefined,
+    api: $('#logApi').value,
+    base_url: baseUrlVal,
+    api_key: apiKey,
+    max_tokens: $('#logMaxTokens').value ? parseInt($('#logMaxTokens').value) : undefined,
+    stream: $('#logStream').checked
+  };
+  $('#logBtn').disabled=true; $('#logBtn').textContent='Sending…';
+  $('#logStatus').innerHTML='<div class="alert info">Calling '+esc(baseUrlVal)+' …</div>';
+  $('#logResult').style.display='none';
+  try{
+    const res=await fetch('/api/log', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const j=await res.json();
+    if(!res.ok || !j.ok) throw new Error((j.error||'unknown') + (j.hint? ' — '+j.hint : ''));
+    const p=j.parsed||{};
+    const tokens=p.tokens||{};
+    const allowanceStr = p.allowance!=null ? '$'+Number(p.allowance).toFixed(5) : '—';
+    const listStr = p.list_cost!=null ? '$'+Number(p.list_cost).toFixed(5) : '—';
+    const costStr = p.cost!=null ? '$'+Number(p.cost).toFixed(5) : '—';
+    const billingBadge = `<span class="badge ${p.billing_source==='balance'?'ok': p.billing_source==='free'?'free' : 'warn'}">${esc(p.billing_source||'?')}</span>`;
+    $('#logParsed').innerHTML=`
+      <dt>Billing source</dt><dd>${billingBadge} <span class="small">free=Free · balance=Paid/Extra Usage · go/go-plus=within plan · byok=BYOK</span></dd>
+      <dt>Cost (charged)</dt><dd class="mono">${costStr} ${p.estimated?' (estimated)':''}</dd>
+      <dt>Allowance</dt><dd class="mono">${allowanceStr} <span class="small">— Go $ toward monthly limit (5h 20% / week 50%)</span></dd>
+      <dt>List cost</dt><dd class="mono">${listStr}</dd>
+      <dt>Tokens</dt><dd class="mono">input ${esc(tokens.input??'—')} · output ${esc(tokens.output??'—')} · reasoning ${esc(tokens.reasoning??'—')} · cache_read ${esc(tokens.cache_read??'—')} · 5m ${esc(tokens.cache_write_5m??'—')} · 1h ${esc(tokens.cache_write_1h??'—')}</dd>
+      <dt>Prompt/Completion</dt><dd class="mono">${esc(p.prompt_tokens??'—')} / ${esc(p.completion_tokens??'—')}</dd>`;
+    $('#logPreview').textContent=j.preview || '(no preview)';
+    $('#logRaw').textContent=JSON.stringify(j.response,null,2).slice(0,8000);
+    $('#logStatus').innerHTML=`<div class="alert info">Logged to <span class="mono">${esc(j.db)}</span> + <span class="mono">${esc(j.csv)}</span> — also see Report tab.</div>`;
+    $('#logResult').style.display='block';
+    // auto-refresh report
+    loadReport();
+  }catch(e){
+    $('#logStatus').innerHTML=`<div class="alert error">${esc(e.message)}</div>`;
+  }finally{ $('#logBtn').disabled=false; $('#logBtn').textContent='Send & Log → DB/CSV'; }
+});
+
+// --- Report ---
+async function loadReport(){
+  const plan=$('#reportPlan').value;
+  const periodDay=$('#reportPeriodDay').value||'1';
+  $('#reportStatus').innerHTML='<div class="alert info">Loading…</div>';
+  $('#reportContent').style.display='none';
+  try{
+    const res=await fetch('/api/report?plan='+encodeURIComponent(plan)+'&period_start_day='+encodeURIComponent(periodDay));
+    const j=await res.json();
+    if(j.empty){ $('#reportStatus').innerHTML=`<div class="alert warn">${esc(j.message || 'No logged requests yet. Use Logger tab or CLI: python tracker.py log --model kimi-k3 --message "hi"')}</div>`; return; }
+    $('#reportStatus').innerHTML='';
+    const mt=j.month_totals||{};
+    $('#reportTotals').textContent=`LIFETIME cost $${j.totals.cost.toFixed(4)} • this period $${(mt.cost||0).toFixed(4)} (allowance $${(mt.allowance||0).toFixed(4)}, ${mt.n||0} req)`;
+    const tb=$('#reportTable tbody'); tb.innerHTML='';
+    j.per_model_billing.forEach(r=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td class="mono">${esc(r.model)}</td><td><span class="badge ${r.billing_source==='balance'?'ok':''}">${esc(r.billing_source||'-')}</span></td><td style="text-align:center">${r.n}</td><td style="text-align:right">$${(r.sum_cost||0).toFixed(4)}</td><td style="text-align:right">$${(r.sum_allowance||0).toFixed(4)}</td><td style="text-align:right">$${(r.sum_list||0).toFixed(4)}</td>`;
+      tb.appendChild(tr);
+    });
+    const goEl=$('#reportGo');
+    if(plan){
+      const meta=j.window_meta||{};
+      const statusColor={over:'#ef4444',near:'#f59e0b',warm:'#f59e0b',ok:'#22c55e','no-limit':'#94a3b8'};
+      const cell=(used,limit,pct)=>{
+        if(limit==null) return '<span class="small">unlimited</span>';
+        const color=pct>100?'#ef4444':pct>80?'#f59e0b':'#22c55e';
+        return `<span class="mono" style="color:${color}">$${used.toFixed(2)} / $${limit.toFixed(0)}</span> <span class="small">${pct.toFixed(1)}%</span>`;
+      };
+      let html=`<b>Go windows vs ${esc(plan)}</b> <span class="small">• period since ${esc((meta.period_start||'').slice(0,10))} (day ${esc(meta.period_start_day)}) • week since ${esc((meta.week_start||'').slice(0,10))} • 5h window ${meta.five_hour_start?('since '+esc(meta.five_hour_start.slice(0,19).replace('T',' '))):'idle'} • as of ${esc((meta.as_of||'').slice(0,19).replace('T',' '))}</span>`;
+      if(!j.windows || !j.windows.length){
+        html+='<div class="alert info" style="margin-top:6px">No Go allowance logged in this period. Log a Go request, or widen the period start day.</div>';
+      }else{
+        html+='<div style="overflow:auto;border:1px solid var(--border);border-radius:8px;margin-top:8px"><table class="table"><thead><tr><th>Model</th><th style="text-align:right">5h used / limit</th><th style="text-align:right">Week used / limit</th><th style="text-align:right">Month used / limit</th><th>Status</th></tr></thead><tbody>';
+        j.windows.forEach(w=>{
+          const color=statusColor[w.status]||'#94a3b8';
+          html+=`<tr><td class="mono">${esc(w.model)}</td><td style="text-align:right">${cell(w.five_hour_used,w.five_hour_limit,w.five_hour_pct||0)}</td><td style="text-align:right">${cell(w.week_used,w.week_limit,w.week_pct||0)}</td><td style="text-align:right">${cell(w.month_used,w.month_limit,w.month_pct||0)}</td><td><span class="badge" style="color:${color};border-color:${color}">${esc(w.status)}</span></td></tr>`;
+        });
+        html+='</tbody></table></div>';
+      }
+      goEl.innerHTML=html;
+    } else goEl.innerHTML='<span class="small">Pick a plan to see the live 5h / weekly / monthly windows.</span>';
+    const dBody=$('#reportDaily tbody'); dBody.innerHTML='';
+    j.daily.forEach(d=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td>${esc(d.day)}</td><td style="text-align:right">$${d.cost.toFixed(4)}</td><td style="text-align:right">$${(d.allowance||0).toFixed(4)}</td><td style="text-align:center">${d.n}</td>`;
+      dBody.appendChild(tr);
+    });
+    const rBody=$('#reportRecent tbody'); rBody.innerHTML='';
+    j.recent.forEach(r=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td class="small">${esc((r.timestamp||'').slice(0,19).replace('T',' '))}</td><td class="mono">${esc(r.model)}</td><td>${esc(r.billing_source||'-')}</td><td>${r.cost!=null? '$'+r.cost: '-'}</td><td>${r.allowance!=null?r.allowance:'-'}</td><td class="small">${r.input_tokens??'-'}/${r.output_tokens??'-'} ${r.cache_read? 'c'+r.cache_read:''}</td><td>${esc(r.status)}</td>`;
+      rBody.appendChild(tr);
+    });
+    $('#reportContent').style.display='block';
+  }catch(e){
+    $('#reportStatus').innerHTML=`<div class="alert error">${esc(e.message)}</div>`;
+  }
+}
+$('#reportRefresh').addEventListener('click',loadReport);
+$('#reportPlan').addEventListener('change',loadReport);
+$('#reportPeriodDay').addEventListener('change',loadReport);
+</script>
+</body>
+</html>

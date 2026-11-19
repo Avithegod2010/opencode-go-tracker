@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Opencode Go Tracker — Detailed Analysis</title>
+<meta name="color-scheme" content="dark"/>
+<style>
+:root{--bg:#080c12;--panel:#111827;--panel2:#0f1a2b;--panel3:#132034;--border:#1e2e4a;--border2:#253a5e;--text:#e6efff;--muted:#8da2be;--muted2:#6b7fa0;--accent:#3b82f6;--accent2:#06b6d4;--ok:#22c55e;--warn:#f59e0b;--danger:#ef4444;--radius:14px;--radius2:10px}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;font-family:Inter, ui-sans, system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;background:var(--bg);color:var(--text);line-height:1.55}
+a{color:#60a5fa}
+header{position:sticky;top:0;z-index:20;background:rgba(8,12,18,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--border)}
+.header-inner{max-width:1280px;margin:0 auto;padding:14px 18px;display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.brand{display:flex;gap:12px;align-items:center}
+.badge-icon{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#3b82f6 0%,#06b6d4 50%,#22c55e 100%);display:grid;place-items:center;font-weight:900;letter-spacing:.5px;box-shadow:0 4px 16px rgba(59,130,246,.35)}
+.brand h1{margin:0;font-size:15px;letter-spacing:.3px}
+.brand p{margin:0;font-size:12px;color:var(--muted)}
+.header-actions{display:flex;gap:8px;align-items:center}
+.mini{font-size:11px;color:var(--muted2);border:1px solid var(--border);padding:4px 8px;border-radius:999px}
+.container{max-width:1280px;margin:0 auto;padding:18px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:14px}
+.card h2{margin:0 0 4px;font-size:14px;letter-spacing:.2px}
+.card .desc{margin:0 0 12px;color:var(--muted);font-size:12.5px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+@media(max-width:1000px){.grid2,.grid3,.grid4{grid-template-columns:1fr}}
+.drop{border:2px dashed #2c3e63;border-radius:14px;padding:26px;text-align:center;background:linear-gradient(180deg,var(--panel2),var(--panel));cursor:pointer;transition:.15s}
+.drop.dragover{border-color:var(--accent);background:#0f2340;box-shadow:0 0 0 4px rgba(59,130,246,.15)}
+.drop input{display:none}
+.drop-title{font-weight:800;font-size:14px}
+.controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:12px 0 0}
+.controls label{font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center;background:var(--panel3);border:1px solid var(--border);padding:6px 10px;border-radius:999px}
+select, input[type=text]{background:#0a1324;border:1px solid #26385c;color:var(--text);border-radius:8px;padding:7px 10px;font-size:12.5px}
+.btn{appearance:none;border:1px solid var(--border);background:#162a4a;color:var(--text);padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:650;font-size:13px}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;box-shadow:0 4px 14px rgba(59,130,246,.35)}
+.btn.ghost{background:transparent}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;border:1px solid var(--border);color:var(--muted)}
+.badge.ok{color:#86efac;border-color:#14532d;background:#0a1f12}
+.badge.warn{color:#fcd34d;border-color:#5a3a00;background:#1f1600}
+.badge.free{color:#94a3b8}
+.badge.go{color:#7dd3fc;border-color:#0e4a6b;background:#0a1f2e}
+.badge.billable{color:#86efac}
+.kpi{display:flex;flex-direction:column;gap:4px;background:var(--panel2);border:1px solid var(--border);border-radius:12px;padding:14px}
+.kpi .label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;font-weight:700}
+.kpi .value{font-size:20px;font-weight:850;letter-spacing:-.5px}
+.kpi .sub{font-size:11px;color:var(--muted2)}
+.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:10px}
+.table{width:100%;border-collapse:collapse;font-size:13px}
+.table th{color:var(--muted);font-weight:700;text-align:left;border-bottom:1px solid var(--border);padding:9px 8px;white-space:nowrap;background:var(--panel3);position:sticky;top:0}
+.table td{border-bottom:1px solid #16233a;padding:8px 8px;white-space:nowrap}
+.table tr:hover td{background:#0f1e36}
+.mono{font-family: ui-monospace, SFMono-Regular, Menlo, monospace}
+.small{font-size:12px;color:var(--muted)}
+.bar-track{height:8px;background:#0a1324;border:1px solid #1e2e4a;border-radius:999px;overflow:hidden}
+.bar-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:999px}
+.bar-fill.billable{background:linear-gradient(90deg,#22c55e,#16a34a)}
+.bar-fill.go{background:linear-gradient(90deg,#38bdf8,#0ea5e9)}
+.bar-fill.free{background:#334155}
+.alert{padding:10px 12px;border-radius:8px;border:1px solid;font-size:12.5px;margin:8px 0}
+.alert.info{border-color:#1e3a5f;background:#0c1a2f;color:#93c5fd}
+.alert.warn{background:#1f1600;border-color:#5a3a00;color:#fcd34d}
+.alert.error{background:#2a0f13;border-color:#7f1d1d;color:#fca5a5}
+details summary{cursor:pointer;color:var(--muted);font-size:12px}
+pre{white-space:pre-wrap;word-break:break-word;background:#070c16;border:1px solid var(--border);padding:10px;border-radius:8px;font-size:12px;max-height:300px;overflow:auto}
+.hr{height:1px;background:var(--border);margin:12px 0}
+.flex{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.pill{padding:4px 10px;border-radius:999px;border:1px solid var(--border);background:var(--panel2);font-size:12px}
+.hidden{display:none !important}
+</style>
+</head>
+<body>
+<header>
+  <div class="header-inner">
+    <div class="brand">
+      <div class="badge-icon">◈</div>
+      <div>
+        <h1>Opencode Go Tracker — Detailed Analysis</h1>
+        <p>Import your Console Export CSVs → instant per-model, daily, person & Go limit breakdown. 100% local — no upload, no CLI.</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <span class="mini">File → Open → works offline • file://</span>
+      <a class="btn ghost" href="#" onclick="document.getElementById('help').scrollIntoView({behavior:'smooth'});return false">Help</a>
+    </div>
+  </div>
+</header>
+
+<div class="container">
+  <!-- IMPORT -->
+  <div class="card">
+    <h2>1 — Import logs</h2>
+    <p class="desc">From Console: <b>Activity → Usage → Export usage</b> → download <b>7 days</b>, <b>30 days</b>, <b>90 days</b> CSVs. The 3 exports overlap — this tracker deduplicates overlapping daily totals and merges into one analysis. Also accepts the logger's <span class="mono">usage_log.csv</span> or any CSV with <span class="mono">date, model, cost</span> columns (different header names auto-detected).</p>
+    <div id="drop" class="drop">
+      <div class="drop-title">Drop CSV files here or click to choose</div>
+      <div class="small">Multiple files OK — e.g. <span class="mono">usage_7d.csv</span> + <span class="mono">usage_30d.csv</span> + <span class="mono">usage_90d.csv</span> · Accepts any header variant</div>
+      <input id="fileInput" type="file" accept=".csv,text/csv,.txt" multiple/>
+    </div>
+    <div id="fileList" class="small" style="margin-top:8px;color:var(--muted)">No files yet — try the <b>examples</b> below</div>
+    <div class="controls">
+      <label>Plan <select id="plan"><option value="">No limit %</option><option value="go" selected>Go — $10/mo</option><option value="go_plus">Go Plus — $40/mo</option><option value="go_teams">Go Teams — $20/member</option></select></label>
+      <label title="Like Budgets → What counts: Paid & Go extra usage only"><input type="checkbox" id="billableOnly"/> Billable-only</label>
+      <label title="Removes overlapping daily totals across 7/30/90 exports"><input type="checkbox" id="dedupe" checked/> Deduplicate overlaps</label>
+      <label title="Filter by date range"><input type="text" id="dateFrom" placeholder="from YYYY-MM-DD" style="width:130px"/><span class="small">→</span><input type="text" id="dateTo" placeholder="to YYYY-MM-DD" style="width:130px"/></label>
+      <button id="analyzeBtn" class="btn primary">Analyze</button>
+      <button id="clearBtn" class="btn ghost">Clear</button>
+      <button id="demoBtn" class="btn ghost">Load demo (examples)</button>
+    </div>
+    <div id="importStatus"></div>
+  </div>
+
+  <!-- ANALYSIS (hidden until data) -->
+  <div id="analysis" class="hidden">
+    <!-- KPIs -->
+    <div class="grid4">
+      <div class="kpi"><div class="label">Total cost (deduped)</div><div class="value mono" id="kpiTotal">$—</div><div class="sub" id="kpiTotalSub">—</div></div>
+      <div class="kpi"><div class="label">Billable (Budgets What counts)</div><div class="value mono" id="kpiBillable">$—</div><div class="sub">Paid + Go extra usage · free/go excluded</div></div>
+      <div class="kpi"><div class="label">Go allowance sum</div><div class="value mono" id="kpiAllowance">$—</div><div class="sub">Counts toward Go monthly limit (5h 20% / week 50%)</div></div>
+      <div class="kpi"><div class="label">Coverage</div><div class="value" id="kpiCoverage">—</div><div class="sub mono" id="kpiCoverageSub">—</div></div>
+    </div>
+
+    <div class="grid2" style="margin-top:12px">
+      <div class="card" style="margin:0">
+        <h2>By billing source — What counts toward budgets</h2>
+        <p class="desc"><span class="badge ok">Yes</span> Paid (<span class="mono">balance/byok</span>) counts · <span class="badge">No</span> Free (<span class="mono">free</span>) & Go within plan (<span class="mono">go/go-plus</span>) don't · <b>Go extra usage</b> appears as <span class="mono">balance</span> (Yes).</p>
+        <div id="billingBreakdown"></div>
+      </div>
+      <div class="card" style="margin:0">
+        <h2>Cost by model — share of total</h2>
+        <p class="desc">Longest bar = most expensive model. Billable segment = dark green.</p>
+        <div id="modelBars"></div>
+        <div class="small" style="margin-top:8px">Top model: <span id="topModel" class="mono">—</span> · Free models unlimited.</div>
+      </div>
+    </div>
+
+    <!-- Per-model table -->
+    <div class="card">
+      <h2>Per-model totals — detailed</h2>
+      <p class="desc">Sorted by current-month usage. <span class="mono">% used</span> = allowance in the newest month present in the data ÷ that model's monthly limit. The 5h window needs request timestamps and cannot be derived from daily exports — use the live Report tab for it. 5h = 20%, Weekly = 50%. Color: &lt;50% ok, 50–80% warn, &gt;80% danger.</p>
+      <div class="controls">
+        <input id="modelSearch" type="text" placeholder="Filter models… (e.g. kimi)" style="max-width:220px"/>
+        <label><input type="checkbox" id="hideFree" checked/> Hide free/unlimited</label>
+        <span class="pill small" id="modelCount">— models</span>
+        <button class="btn ghost" id="downloadPerModel">Download per_model.csv</button>
+        <button class="btn ghost" id="downloadDetailed">Download detailed_merged.csv</button>
+      </div>
+      <div class="table-wrap">
+        <table class="table" id="perModelTable">
+          <thead><tr><th>Model</th><th style="text-align:right">Cost $</th><th style="text-align:right">Billable $</th><th style="text-align:right">List $</th><th style="text-align:right">Month alloc $</th><th style="text-align:center">Rows</th><th style="text-align:right">Monthly limit</th><th style="text-align:right">% used</th><th>Go bar</th><th style="text-align:right">5h limit</th><th style="text-align:right">Week limit</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Daily -->
+    <div class="grid2">
+      <div class="card" style="margin:0">
+        <h2>Daily trend</h2>
+        <p class="desc">Daily cost & billable. Tallest day = peak usage.</p>
+        <div id="dailyBars" style="display:flex;align-items:end;gap:3px;height:140px;border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--panel2)"></div>
+        <div class="table-wrap" style="margin-top:10px;max-height:260px">
+          <table class="table" id="dailyTable"><thead><tr><th>Day</th><th style="text-align:right">Cost $</th><th style="text-align:right">Billable $</th><th style="text-align:right">Allowance $</th><th style="text-align:center">Rows</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+      <div class="card" style="margin:0">
+        <h2>By person (if present in CSV)</h2>
+        <p class="desc">From <span class="mono">person / member / email</span> column. Helps with Go Teams per-member view.</p>
+        <div id="personBreakdown"></div>
+        <div class="table-wrap" style="margin-top:10px;max-height:260px">
+          <table class="table" id="personTable"><thead><tr><th>Person</th><th style="text-align:center">Rows</th><th style="text-align:right">Cost $</th><th>Share</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Go forecaster -->
+    <div class="card">
+      <h2>Go limit forecaster</h2>
+      <p class="desc">Each model has its own monthly $ limit (Teams = Go +$5). You have <b>3 windows</b> per model: 5-hour (20%), weekly (50%), monthly (100%). <span class="mono">allowance</span> is what counts — for Go, <span class="mono">cost</span> is 0 while <span class="mono">allowance</span> tracks consumption. Extra Usage (Go page toggle) → over-limit becomes <span class="mono">balance</span> cost.</p>
+      <div id="goForecaster" class="grid3"></div>
+    </div>
+
+    <!-- Raw + diagnostics -->
+    <div class="card">
+      <h2>Diagnostics & raw rows</h2>
+      <div class="grid2">
+        <div>
+          <div class="small">Files imported</div>
+          <div id="diagFiles" class="mono small"></div>
+          <div class="small" style="margin-top:8px">Detected columns per file</div>
+          <pre id="diagCols" style="max-height:160px"></pre>
+          <div class="small" style="margin-top:8px">Deduped <span id="diagDedupe" class="mono">—</span> · Billable filter <span id="diagBillable" class="mono">—</span></div>
+        </div>
+        <div>
+          <label class="small">Search raw rows <input id="rawSearch" type="text" placeholder="date, model, person…" style="width:260px"/></label>
+          <div class="table-wrap" style="max-height:320px;margin-top:8px">
+            <table class="table" id="rawTable"><thead><tr><th>Date</th><th>Model</th><th>Person</th><th>Cost</th><th>Allow</th><th>Source</th><th>Billable?</th></tr></thead><tbody></tbody></table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HELP -->
+  <div id="help" class="card">
+    <h2>Help — where these numbers come from (Billing, Go, Budgets)</h2>
+    <div class="grid2 small">
+      <div>
+        <h3 style="font-size:13px">Billing & Invoices</h3>
+        <ul>
+          <li><b>Settings → Billing</b>: Payment method (Card/Link/Alipay/UPI/WeChat Pay), Add credits ($10/$50/$100 + 4.6%+$0.31 fee), Auto-recharge (charges default method), check balance.</li>
+          <li><b>Activity</b> card (owners/admins) + header <b>B</b> drawer = live Go limits/credits/usage (members see own). Invoices list: <b>Download invoice / View receipt</b> for every payment — entries: Balance top-up, Automatic top-up, Go subscription / renewal / Plus upgrade / Teams upgrade / Teams member, Monthly Usage.</li>
+          <li>Balance never negative — <span class="mono">402 Insufficient funds</span> at 0. Invoiced billing draws on credit limit, invoice 1st UTC due 14d.</li>
+        </ul>
+        <h3 style="font-size:13px">Go</h3>
+        <ul>
+          <li>$10/mo (Go), $40/mo (Go Plus), $20/member/mo (Go Teams). Teams limits = Go +$5 per model. Free models unlimited.</li>
+          <li>Per-model monthly $ limits vary: e.g. kimi-k3 $15/$60/$20, glm-5.3-flash $60/$180/$65, deepseek-v4.1-flash $100/$200/$105 (full table embedded in this file).</li>
+          <li>Windows: <b>5h 20%</b> / <b>weekly 50%</b> / <b>monthly 100%</b>. Response field <span class="mono">opencode.allowance</span> counts toward windows. <b>Extra Usage</b> toggle (Go Teams on by default) → over-limit falls back to balance (<span class="mono">billing_source=balance</span>, <b>counts</b> toward budgets).</li>
+        </ul>
+      </div>
+      <div>
+        <h3 style="font-size:13px">Budgets & What counts</h3>
+        <ul>
+          <li><b>Controls → Add policy</b>: Entire workspace / All members / tags / specific members / service accounts. $0 blocks. Resets 1st 00:00 UTC. Already-incurred spend counts.</li>
+          <li><b>What counts</b>: Paid Console models <b>Yes</b>, BYOK with price <b>Yes</b>, Web search Yes, Free <b>No</b>, Go within plan <b>No</b>, Go extra usage <b>Yes</b>. Hit → <span class="mono">429 Policy budget exceeded</span> (check Activity → Logs).</li>
+          <li><b>Track spend</b>: Activity → Usage breakdown by day/model/person → <b>Export usage</b> 7/30/90d — that export is what this single-file analyzer merges.</li>
+        </ul>
+        <h3 style="font-size:13px">This file</h3>
+        <ul>
+          <li>Single <b>HTML</b> — open via double-click or drag into browser. No install, no server, no upload — parsing happens <b>locally in your browser</b> (FileReader). Works <span class="mono">file://</span> offline.</li>
+          <li>Handles any header names (<span class="mono">date/day, model/model_id, person/member/email, cost/amount/usd, billing_source/source, allowance</span>), quoted commas, <span class="mono">$</span> signs, overlapping exports deduped by <span class="mono">date+model+person+billing_source+cost+allowance</span>.</li>
+          <li>Use <span class="mono">Billable-only</span> to mirror budget spend, <span class="mono">Deduplicate</span> off to see raw sum, <span class="mono">Plan</span> to see Go % vs limits.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="alert info">Tip: After merging, download <span class="mono">per_model.csv</span> and <span class="mono">detailed_merged.csv</span> for your records. Logger's live <span class="mono">usage_log.csv</span> also imports here — its <span class="mono">billing_source, cost, allowance, tokens</span> columns are recognized the same way.</div>
+  </div>
+
+  <div class="small" style="text-align:center;color:var(--muted2);padding:10px 0">Single-file analyzer · 100% local · Theme: Billing / Activity / B-drawer / Invoices / Go / Budgets faithful · <span class="mono">file://</span> ready</div>
+</div>
+
+<script>
+// ---------- Go limits (from https://opencode.ai/docs/go) ----------
+const GO_LIMITS = {
+  "glm-5.3-flash": {go:60, go_plus:180, go_teams:65},
+  "glm-5.3": {go:15, go_plus:120, go_teams:20},
+  "glm-5.2": {go:60, go_plus:180, go_teams:65},
+  "kimi-k3.1-pro": {go:15, go_plus:60, go_teams:20},
+  "kimi-k3": {go:15, go_plus:60, go_teams:20},
+  "kimi-k2.7-code": {go:60, go_plus:180, go_teams:65},
+  "longcat-2.0": {go:60, go_plus:240, go_teams:65},
+  "step-5-preview": {go:15, go_plus:60, go_teams:20},
+  "beam-free": {go:null, go_plus:null, go_teams:null},
+  "iceman-contributor-free": {go:null, go_plus:null, go_teams:null},
+  "mimo-v2.6-flash": {go:60, go_plus:120, go_teams:65},
+  "mimo-v2.6-pro": {go:15, go_plus:60, go_teams:20},
+  "mimo-v2.5": {go:60, go_plus:120, go_teams:65},
+  "mimo-v2.5-pro": {go:15, go_plus:60, go_teams:20},
+  "minimax-m3.1-flash": {go:20, go_plus:80, go_teams:25},
+  "minimax-m3": {go:60, go_plus:180, go_teams:65},
+  "muse-spark-1.3-contributor": {go:60, go_plus:120, go_teams:65},
+  "muse-spark-1.2-contributor": {go:60, go_plus:120, go_teams:65},
+  "qwen3.8-max": {go:15, go_plus:60, go_teams:20},
+  "qwen3.8-flash": {go:30, go_plus:90, go_teams:35},
+  "qwen3.7-plus": {go:60, go_plus:180, go_teams:65},
+  "deepseek-v4.1-flash": {go:100, go_plus:200, go_teams:105},
+  "deepseek-v4-pro": {go:15, go_plus:60, go_teams:20},
+  "hy4-preview": {go:30, go_plus:120, go_teams:35},
+  "hy3": {go:60, go_plus:240, go_teams:65},
+  "grok-4.7": {go:15, go_plus:60, go_teams:20},
+  "gpt-6-luna": {go:15, go_plus:60, go_teams:20},
+  "gpt-5.6-luna": {go:15, go_plus:60, go_teams:20},
+  "claude-haiku-5-5": {go:15, go_plus:60, go_teams:20},
+  "gemini-4-argon": {go:30, go_plus:120, go_teams:35},
+};
+const ALIASES = {"glm 5.3 flash":"glm-5.3-flash","kimi k3":"kimi-k3","kimi k3.1 pro":"kimi-k3.1-pro","longcat 2.0":"longcat-2.0","grok 4.7":"grok-4.7","gpt 6 luna":"gpt-6-luna","gpt 5.6 luna":"gpt-5.6-luna","claude haiku 5.5":"claude-haiku-5-5","gemini 4 argon":"gemini-4-argon","muse spark 1.2 contributor":"muse-spark-1.2-contributor","muse spark 1.3 contributor":"muse-spark-1.3-contributor","deepseek v4.1 flash":"deepseek-v4.1-flash","deepseek v4 pro":"deepseek-v4-pro","qwen3.8 max":"qwen3.8-max","qwen3.8 flash":"qwen3.8-flash","qwen3.7 plus":"qwen3.7-plus","mimo-v2.6-flash":"mimo-v2.6-flash","mimo-v2.6-pro":"mimo-v2.6-pro","mimo-v2.5":"mimo-v2.5","mimo-v2.5-pro":"mimo-v2.5-pro","minimax m3.1 flash":"minimax-m3.1-flash","minimax m3":"minimax-m3","hy4 preview":"hy4-preview"};
+function normalizeModel(n){
+  if(!n) return "";
+  let s=String(n).trim().toLowerCase();
+  if(GO_LIMITS[s]) return s;
+  if(ALIASES[s]) return ALIASES[s];
+  let s2=s.replace(/\s+/g,'-').replace(/_/g,'-');
+  if(GO_LIMITS[s2]) return s2;
+  if(ALIASES[s2]) return ALIASES[s2];
+  if(s2.startsWith('opencode-go/')){let c=s2.slice('opencode-go/'.length); if(GO_LIMITS[c]) return c;}
+  return s;
+}
+function monthlyLimit(model, plan){
+  if(!plan) return null;
+  let p=plan.toLowerCase().replace('-','_');
+  // go_plus vs go_teams normalization
+  if(p==='go+plus') p='go_plus';
+  let norm=normalizeModel(model);
+  let entry=GO_LIMITS[norm];
+  if(!entry) return null;
+  return entry[p];
+}
+
+// ---------- CSV parsing (robust, handles quoted commas) ----------
+function normHeader(h){ return String(h).trim().toLowerCase().replace(/[^a-z0-9]/g,''); }
+const COL_ALIASES = {
+  date: ['date','day','timestamp','time','period','start','createdat'],
+  model: ['model','modelid','modelname','model_id'],
+  person: ['person','member','user','email','account','owner','serviceaccount'],
+  cost: ['cost','amount','dollars','usd','price','total','charged','spend'],
+  list_cost: ['listcost','list_cost','totalcost','retail'],
+  billing_source: ['billingsource','billing_source','source','billing','billedvia'],
+  allowance: ['allowance','goallowance'],
+  input_tokens: ['input','inputtokens','prompttokens'],
+  output_tokens: ['output','outputtokens','completiontokens'],
+};
+function detectColumns(headers){
+  let normMap={}; headers.forEach(h=> normMap[normHeader(h)]=h);
+  let out={};
+  for(let logical in COL_ALIASES){
+    let found=null;
+    for(let alias of COL_ALIASES[logical]){
+      let na=normHeader(alias);
+      if(normMap[na]!==undefined){ found=normMap[na]; break; }
+    }
+    out[logical]=found;
+  }
+  return out;
+}
+function parseFloatSafe(v){
+  if(v==null || v==='') return 0;
+  let s=String(v).trim().replace(/\$/g,'').replace(/,/g,'');
+  if(s.startsWith('(') && s.endsWith(')')) s='-'+s.slice(1,-1);
+  let n=parseFloat(s);
+  return isNaN(n)?0:n;
+}
+function normalizeBilling(v){
+  if(!v) return 'unknown';
+  let s=String(v).trim().toLowerCase().replace(/[\s-]/g,'_');
+  if(['go_plus','goplus'].includes(s)) return 'go-plus';
+  if(s==='go') return 'go';
+  if(['balance','paid','credits'].includes(s)) return 'balance';
+  if(s==='free') return 'free';
+  if(['byok','custom','provider'].includes(s)) return 'byok';
+  return s;
+}
+const BUDGET_COUNTS = {balance:true, byok:true, free:false, 'go':false, 'go-plus':false, go_plus:false};
+
+function parseCSVText(text){
+  // Strip BOM
+  if(text.charCodeAt(0)===0xFEFF) text=text.slice(1);
+  let lines=[]; let cur=''; let inQ=false;
+  // we need to split respecting quotes across lines? Simpler: parse via state machine for rows
+  let rows=[]; let row=[]; let field=''; let i=0;
+  for(let ch of text){
+    if(ch==='"'){
+      if(inQ && text[i+1]==='"'){ field+='"'; i++; } // escaped quote? handle later
+      else inQ=!inQ;
+    } else if(ch===',' && !inQ){
+      row.push(field); field='';
+    } else if((ch==='\n' || ch==='\r') && !inQ){
+      if(field!=='' || row.length>0){ row.push(field); rows.push(row); row=[]; field=''; }
+      // skip \r\n pair
+      if(ch==='\r' && text[i+1]==='\n') i++;
+    } else {
+      field+=ch;
+    }
+    i++;
+  }
+  if(field!=='' || row.length>0){ row.push(field); rows.push(row); }
+  // Filter empty rows
+  rows=rows.filter(r=> r.some(c=> String(c).trim()!==''));
+  if(!rows.length) return {headers:[], data:[]};
+  let headers=rows[0].map(h=> String(h).trim());
+  let dataRows=rows.slice(1);
+  // Build objects
+  let objs=dataRows.map(r=>{
+    let o={}; headers.forEach((h,idx)=> o[h]= (r[idx]!==undefined? String(r[idx]).trim() : ''));
+    // also handle extra columns without header? ignore
+    o.__headers=headers;
+    return o;
+  });
+  return {headers, data: objs, rawRows: rows};
+}
+
+// ---------- Merge logic (mirrors csv_merger.py) ----------
+let lastResult=null, lastDetailedRows=null;
+
+function analyzeFiles(fileEntries, opts){
+  // fileEntries: [{name, text}]
+  let allRows=[]; let detectedCols={}; let filesInfo=[];
+  for(let fe of fileEntries){
+    let {headers, data}=parseCSVText(fe.text);
+    if(!headers.length){ filesInfo.push({name:fe.name, rows:0, headers}); continue; }
+    let colmap=detectColumns(headers);
+    detectedCols[fe.name]=colmap;
+    let rows=[];
+    for(let raw of data){
+      // skip empty rows where all values empty
+      if(Object.values(raw).every(v=>!String(v).trim())) continue;
+      let modelRaw = colmap.model ? raw[colmap.model] : null;
+      if(!modelRaw && !colmap.model){
+        // try infer model-like value
+        for(let k in raw){ let v=raw[k]; if(v && /[a-z]+-[a-z0-9]/i.test(v)){ modelRaw=v; break; } }
+      }
+      let costRaw = colmap.cost ? raw[colmap.cost] : null;
+      let dateRaw = colmap.date ? raw[colmap.date] : '';
+      let personRaw = colmap.person ? raw[colmap.person] : '';
+      let billingRaw = colmap.billing_source ? raw[colmap.billing_source] : '';
+      let allowanceRaw = colmap.allowance ? raw[colmap.allowance] : '';
+      let listCostRaw = colmap.list_cost ? raw[colmap.list_cost] : '';
+      if((costRaw==null || String(costRaw).trim()==='') && listCostRaw) costRaw=listCostRaw;
+      let cost=parseFloatSafe(costRaw);
+      let listCost=listCostRaw? parseFloatSafe(listCostRaw): cost;
+      let allowance=parseFloatSafe(allowanceRaw);
+      let billing=normalizeBilling(billingRaw);
+      // date filter?
+      if(opts.dateFrom && dateRaw && dateRaw < opts.dateFrom) continue;
+      if(opts.dateTo && dateRaw && dateRaw > opts.dateTo) continue;
+      let isBillable = (billing!=='unknown') ? (BUDGET_COUNTS[billing] ?? true) : true;
+      let model=normalizeModel(String(modelRaw||'').trim() ) || 'unknown';
+      if(model==='unknown' && !colmap.model) model='unknown:'+fe.name.replace(/\.[^.]+$/,'');
+      rows.push({date:String(dateRaw).trim(), model, model_raw:String(modelRaw||'').trim(), person:String(personRaw).trim(), cost, list_cost:listCost, billing_source:billing, allowance, is_billable:isBillable, source_file:fe.name, raw});
+    }
+    allRows.push(...rows);
+    filesInfo.push({name:fe.name, rows: rows.length, headers});
+  }
+  let before=allRows.length;
+  let deduped=allRows;
+  let dupesRemoved=0;
+  if(opts.dedupe){
+    // Drop repeats that come from a different file (overlapping 7/30/90
+    // exports) but keep distinct rows that live inside one export.
+    let seen=new Map(); let uniq=[];
+    for(let r of allRows){
+      let key=[r.date, r.model, r.person, r.billing_source, r.cost.toFixed(6), r.allowance.toFixed(6)].join('|');
+      let files=seen.get(key);
+      if(files===undefined){ seen.set(key, new Set([r.source_file])); uniq.push(r); }
+      else if(files.has(r.source_file)){ uniq.push(r); }
+      else { files.add(r.source_file); dupesRemoved++; }
+    }
+    deduped=uniq;
+  }
+  let filtered=deduped;
+  if(opts.billableOnly){
+    filtered=deduped.filter(r=> r.is_billable);
+  }
+  // Aggregations
+  let perModelMap={}, perDay={}, perPerson={}, perBilling={};
+  let totalCostAll=0, totalBillableAll=0, totalAllowanceAll=0;
+  for(let r of deduped){ totalCostAll+=r.cost; if(r.is_billable) totalBillableAll+=r.cost; totalAllowanceAll+=r.allowance; }
+  let totalCost=0, totalBillable=0, totalAllowance=0;
+  for(let r of filtered){ totalCost+=r.cost; if(r.is_billable) totalBillable+=r.cost; totalAllowance+=r.allowance; }
+  for(let r of filtered){
+    let m=r.model;
+    if(!perModelMap[m]) perModelMap[m]={cost:0,list_cost:0,allowance:0,rows:0,billable_cost:0};
+    perModelMap[m].cost+=r.cost; perModelMap[m].list_cost+=r.list_cost; perModelMap[m].allowance+=r.allowance; perModelMap[m].rows++;
+    if(r.is_billable) perModelMap[m].billable_cost+=r.cost;
+    let d=r.date||'(no date)';
+    if(!perDay[d]) perDay[d]={cost:0,billable:0,allowance:0,rows:0};
+    perDay[d].cost+=r.cost; if(r.is_billable) perDay[d].billable+=r.cost; perDay[d].allowance+=r.allowance; perDay[d].rows++;
+    if(r.person){
+      if(!perPerson[r.person]) perPerson[r.person]={cost:0,rows:0};
+      perPerson[r.person].cost+=r.cost; perPerson[r.person].rows++;
+    }
+    perBilling[r.billing_source]=(perBilling[r.billing_source]||0)+r.cost;
+  }
+  // Date scope for the Go forecaster: daily exports cannot resolve a 5-hour
+  // window, but they can resolve the current month and last 7 days relative
+  // to the newest day in the data ("as of" that day).
+  let daysAll=Object.keys(perDay).filter(d=> d!=='(no date)').sort();
+  let asOf = daysAll.length ? daysAll[daysAll.length-1] : null;
+  let monthKey = asOf ? asOf.slice(0,7) : null;
+  let weekFrom = asOf ? shiftDate(asOf, -6) : null;
+  let scoped = !!asOf;
+  let monthAllow={}, weekAllow={}, monthCost={}, weekCost={};
+  for(let r of filtered){
+    let m=r.model;
+    let inMonth = scoped ? (r.date && r.date.slice(0,7)===monthKey) : true;
+    let inWeek = scoped ? (r.date && r.date>=weekFrom && r.date<=asOf) : false;
+    if(inMonth){ monthAllow[m]=(monthAllow[m]||0)+r.allowance; monthCost[m]=(monthCost[m]||0)+r.cost; }
+    if(inWeek){ weekAllow[m]=(weekAllow[m]||0)+r.allowance; weekCost[m]=(weekCost[m]||0)+r.cost; }
+  }
+  let perModel=[];
+  for(let model in perModelMap){
+    let agg=perModelMap[model];
+    let ml = opts.plan ? monthlyLimit(model, opts.plan) : null;
+    let ma = monthAllow[model]||0, wa = weekAllow[model]||0;
+    let used = ma!==0 ? ma : (monthCost[model]||0);
+    let pct = (ml && used) ? (used/ml*100) : null;
+    let h5 = ml ? ml*0.2 : null, wk=ml? ml*0.5:null;
+    perModel.push({model, cost:agg.cost, billable_cost:agg.billable_cost, list_cost:agg.list_cost, allowance_sum:agg.allowance, rows:agg.rows, monthly_limit:ml, pct_month:pct, h5, weekly:wk, month_allowance:ma, week_allowance:wa, scoped});
+  }
+  perModel.sort((a,b)=> (b.pct_month||0)-(a.pct_month||0) || b.cost - a.cost);
+  // daily sorted
+  let dailyEntries=Object.entries(perDay).map(([day,agg])=> ({day, ...agg})).sort((a,b)=> a.day.localeCompare(b.day));
+  // person sorted
+  let personEntries=Object.entries(perPerson).map(([person,agg])=> ({person,...agg})).sort((a,b)=> b.cost - a.cost);
+  // date range
+  let range = daysAll.length? daysAll[0]+' → '+daysAll[daysAll.length-1] : '—';
+  // per billing sorted
+  let billingEntries=Object.entries(perBilling).sort((a,b)=> b[1]-a[1]);
+
+  return {
+    before, after: deduped.length, filtered: filtered.length, dupesRemoved,
+    perModel, dailyEntries, personEntries, billingEntries,
+    totalCost, totalBillable, totalAllowance,
+    totalCostAll, totalBillableAll, totalAllowanceAll,
+    asOf, monthKey, weekFrom, scoped,
+    range, filesInfo, detectedCols,
+    filteredRows: filtered, dedupedRows: deduped, allRows
+  };
+}
+
+// ---------- Rendering ----------
+function fmtMoney(n){ return '$'+Number(n).toFixed(4); }
+function shiftDate(iso, days){ let d=new Date(iso+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+days); return d.toISOString().slice(0,10); }
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+let currentFiles=[]; // {name, text, size}
+
+function renderFileList(){
+  let el=document.getElementById('fileList');
+  if(!currentFiles.length){ el.textContent='No files yet — try the demo button or drop your exports.'; return; }
+  el.innerHTML=currentFiles.map(f=> `<span class="badge">${esc(f.name)} ${(f.size/1024).toFixed(1)} KB</span>`).join(' ') + ` <span class="small">• ${currentFiles.length} file(s)</span>`;
+}
+
+function downloadCSV(filename, csvStr){
+  let blob=new Blob([csvStr],{type:'text/csv'});
+  let a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+
+function toPerModelCSV(perModel){
+  let header=['model','cost','billable_cost','list_cost','allowance_sum','month_allowance','week_allowance','rows','monthly_limit','pct_month','5h_limit','weekly_limit'];
+  let lines=[header.join(',')];
+  perModel.forEach(m=>{
+    lines.push([m.model, m.cost.toFixed(6), m.billable_cost.toFixed(6), m.list_cost.toFixed(6), m.allowance_sum.toFixed(6), (m.month_allowance||0).toFixed(6), (m.week_allowance||0).toFixed(6), m.rows, m.monthly_limit??'', m.pct_month!=null? m.pct_month.toFixed(2):'', m.h5??'', m.weekly??''].join(','));
+  });
+  return lines.join('\n');
+}
+function toDetailedCSV(rows){
+  let header=['date','model','person','cost','list_cost','allowance','billing_source','is_billable','source_file'];
+  let lines=[header.join(',')];
+  rows.forEach(r=> lines.push([r.date, r.model, r.person, r.cost, r.list_cost, r.allowance, r.billing_source, r.is_billable, r.source_file].map(v=> `"${String(v).replace(/"/g,'""')}"`).join(',')));
+  return lines.join('\n');
+}
+
+function renderAnalysis(result, opts){
+  lastResult=result; lastDetailedRows=result.filteredRows;
+  document.getElementById('analysis').classList.remove('hidden');
+  // KPIs
+  document.getElementById('kpiTotal').textContent=fmtMoney(result.totalCost);
+  document.getElementById('kpiTotalSub').textContent=`${result.after} daily rows (after ${result.dupesRemoved} duplicates removed) • ${result.range}` + (opts.billableOnly? ` • all sources ${fmtMoney(result.totalCostAll)}` : '');
+  document.getElementById('kpiBillable').textContent=fmtMoney(result.totalBillable);
+  document.getElementById('kpiAllowance').textContent=fmtMoney(result.totalAllowance);
+  document.getElementById('kpiCoverage').textContent=result.range;
+  document.getElementById('kpiCoverageSub').textContent=`${result.filesInfo.length} file(s) • ${result.before} raw rows → ${result.after} deduped → ${result.filtered} filtered`;
+  // Billing
+  let billEl=document.getElementById('billingBreakdown');
+  let maxBill=Math.max(...result.billingEntries.map(([,v])=> Math.abs(v)), 1);
+  let html='<div class="small" style="display:grid;gap:6px">';
+  result.billingEntries.forEach(([src,amt])=>{
+    let counts = (src==='balance'||src==='byok') ? 'Yes' : (src==='unknown'?'Yes?':'No');
+    let color = (counts==='Yes')? 'billable' : (src==='free'||src.startsWith('go')?'free':'');
+    let pct = Math.abs(amt)/maxBill*100;
+    html+=`<div><div class="flex" style="justify-content:space-between"><span class="mono">${esc(src)}</span><span class="mono">${fmtMoney(amt)}</span><span class="badge ${counts==='Yes'?'ok':''}">${counts}</span></div><div class="bar-track"><div class="bar-fill ${color}" style="width:${pct}%"></div></div></div>`;
+  });
+  if(!result.billingEntries.length) html='<span class="small">No billing source column — counted as billable.</span>';
+  html+='</div>'; billEl.innerHTML=html;
+  // Model bars
+  let barsEl=document.getElementById('modelBars');
+  if(result.perModel.length){
+    let maxCost=Math.max(...result.perModel.map(m=>m.cost), 0.0001);
+    let barsHtml='<div style="display:grid;gap:6px">';
+    result.perModel.slice(0,8).forEach(m=>{
+      let w=(m.cost/maxCost*100).toFixed(1);
+      let bw=(m.billable_cost/maxCost*100).toFixed(1);
+      barsHtml+=`<div><div class="flex" style="justify-content:space-between"><span class="mono" style="font-size:12px">${esc(m.model)}</span><span class="small mono">${fmtMoney(m.cost)}</span></div><div class="bar-track" style="position:relative"><div class="bar-fill" style="width:${w}%"></div><div class="bar-fill billable" style="width:${bw}%;margin-top:-8px;opacity:.9"></div></div></div>`;
+    });
+    barsHtml+='</div>';
+    document.getElementById('topModel').textContent=result.perModel[0].model;
+    barsEl.innerHTML=barsHtml;
+  } else barsEl.innerHTML='<span class="small">No models</span>';
+
+  // Per-model table
+  let tbody=document.querySelector('#perModelTable tbody');
+  let search=(document.getElementById('modelSearch').value||'').toLowerCase();
+  let hideFree=document.getElementById('hideFree').checked;
+  let filteredModels=result.perModel.filter(m=>{
+    if(search && !m.model.includes(search)) return false;
+    if(hideFree && (m.monthly_limit==null)) return false;
+    return true;
+  });
+  document.getElementById('modelCount').textContent=`${filteredModels.length} models (of ${result.perModel.length})`;
+  tbody.innerHTML='';
+  filteredModels.forEach(m=>{
+    let tr=document.createElement('tr');
+    let pctText = m.pct_month!=null ? m.pct_month.toFixed(1)+'%' : '-';
+    let pctColor = m.pct_month==null ? '' : (m.pct_month>80?'#ef4444': m.pct_month>50?'#f59e0b':'#22c55e');
+    let bar = m.pct_month!=null ? `<div class="bar-track" style="width:90px"><div class="bar-fill" style="width:${Math.min(m.pct_month,100)}%;background:${pctColor}"></div></div>` : '-';
+    let limText = m.monthly_limit!=null ? '$'+m.monthly_limit : 'Unl.';
+    let h5Text = m.h5!=null ? '$'+Math.round(m.h5) : '-';
+    let wkText = m.weekly!=null ? '$'+Math.round(m.weekly) : '-';
+    tr.innerHTML=`<td class="mono">${esc(m.model)}</td><td style="text-align:right" class="mono">${fmtMoney(m.cost)}</td><td style="text-align:right" class="mono">${fmtMoney(m.billable_cost)}</td><td style="text-align:right" class="mono">${fmtMoney(m.list_cost)}</td><td style="text-align:right" class="mono">${fmtMoney(m.month_allowance)}</td><td style="text-align:center">${m.rows}</td><td style="text-align:right" class="mono">${limText}</td><td style="text-align:right;color:${pctColor}">${pctText}</td><td>${bar}</td><td style="text-align:right" class="mono">${h5Text}</td><td style="text-align:right" class="mono">${wkText}</td>`;
+    tbody.appendChild(tr);
+  });
+  if(!filteredModels.length) tbody.innerHTML='<tr><td colspan="11" class="small" style="text-align:center;padding:20px">No models match filter.</td></tr>';
+
+  // Daily
+  let dailyTbody=document.querySelector('#dailyTable tbody');
+  dailyTbody.innerHTML='';
+  let dailyBars=document.getElementById('dailyBars'); dailyBars.innerHTML='';
+  if(result.dailyEntries.length){
+    let maxDaily=Math.max(...result.dailyEntries.map(d=> d.cost), 1);
+    result.dailyEntries.forEach(d=>{
+      let tr=document.createElement('tr');
+      tr.innerHTML=`<td class="mono">${esc(d.day)}</td><td style="text-align:right" class="mono">${fmtMoney(d.cost)}</td><td style="text-align:right" class="mono">${fmtMoney(d.billable)}</td><td style="text-align:right" class="mono">${fmtMoney(d.allowance)}</td><td style="text-align:center">${d.rows}</td>`;
+      dailyTbody.appendChild(tr);
+    });
+    // bars
+    result.dailyEntries.forEach(d=>{
+      let h=Math.max(4, (d.cost/maxDaily*120));
+      let bar=document.createElement('div');
+      bar.style.cssText=`flex:1; background:linear-gradient(180deg,#3b82f6,#1e3a5f); border-radius:4px 4px 0 0; height:${h}px; min-width:4px; position:relative`;
+      bar.title=`${d.day}: ${fmtMoney(d.cost)} (billable ${fmtMoney(d.billable)})`;
+      dailyBars.appendChild(bar);
+    });
+    // x labels
+    let labelRow=document.createElement('div');
+    labelRow.style.cssText='display:flex;gap:3px; font-size:9px; color:var(--muted2); margin-top:4px';
+    result.dailyEntries.forEach(d=>{
+      let lbl=document.createElement('div');
+      lbl.style.flex='1'; lbl.style.textAlign='center'; lbl.textContent=d.day.slice(5);
+      labelRow.appendChild(lbl);
+    });
+    dailyBars.parentElement.appendChild(labelRow);
+  } else dailyTbody.innerHTML='<tr><td colspan="5" class="small" style="text-align:center">No date column detected.</td></tr>';
+
+  // Person
+  let personTbody=document.querySelector('#personTable tbody');
+  personTbody.innerHTML='';
+  let personBreakdown=document.getElementById('personBreakdown');
+  if(result.personEntries.length){
+    let maxP=Math.max(...result.personEntries.map(p=>p.cost),1);
+    let html='';
+    result.personEntries.slice(0,5).forEach(p=>{
+      let w=(p.cost/maxP*100).toFixed(1);
+      html+=`<div style="display:grid;gap:4px;margin-bottom:6px"><div class="flex" style="justify-content:space-between"><span class="mono" style="font-size:12px">${esc(p.person)}</span><span class="mono small">${fmtMoney(p.cost)} • ${p.rows} rows</span></div><div class="bar-track"><div class="bar-fill" style="width:${w}%"></div></div></div>`;
+    });
+    personBreakdown.innerHTML=html;
+    result.personEntries.forEach(p=>{
+      let share=(p.cost / (result.totalCost||1) *100).toFixed(1);
+      let tr=document.createElement('tr');
+      tr.innerHTML=`<td class="mono">${esc(p.person)}</td><td style="text-align:center">${p.rows}</td><td style="text-align:right" class="mono">${fmtMoney(p.cost)}</td><td><div class="bar-track" style="width:80px;display:inline-block;vertical-align:middle"><div class="bar-fill" style="width:${share}%"></div></div> <span class="small">${share}%</span></td>`;
+      personTbody.appendChild(tr);
+    });
+  } else {
+    personBreakdown.innerHTML='<span class="small">No <span class="mono">person/member/email</span> column found — CSV is likely workspace-level aggregate.</span>';
+    personTbody.innerHTML='<tr><td colspan="4" class="small" style="text-align:center">No person column</td></tr>';
+  }
+
+  // Go forecaster (month + last 7 days, scoped to the newest day in the data)
+  let goEl=document.getElementById('goForecaster');
+  if(opts.plan){
+    let html=`<div class="small" style="grid-column:1/-1">Month ${result.monthKey||'—'} • last 7 days ${result.weekFrom||'—'} → ${result.asOf||'—'} (as of the newest day in the data). The 5-hour window needs request timestamps, so it lives in the live Report tab.</div>`;
+    let sorted=[...result.perModel].filter(m=> m.monthly_limit!=null).sort((a,b)=> (b.pct_month||0)-(a.pct_month||0));
+    sorted.slice(0,6).forEach(m=>{
+      let limit=m.monthly_limit;
+      let pctText=m.pct_month!=null? m.pct_month.toFixed(1)+'%':'—';
+      let status=m.pct_month==null? 'No allowance yet' : (m.pct_month>100?'OVER LIMIT — Extra Usage → balance': m.pct_month>80?'Near limit': m.pct_month>50?'Warm': 'OK');
+      let color=m.pct_month==null?'#334155': m.pct_month>80?'#ef4444': m.pct_month>50?'#f59e0b':'#22c55e';
+      let weekText=m.week_allowance!=null? fmtMoney(m.week_allowance) : '—';
+      html+=`<div class="kpi" style="border-left:3px solid ${color}"><div class="label">${esc(m.model)}</div><div class="value mono" style="font-size:16px">${pctText} <span class="small">of $${limit??'∞'}</span></div><div class="sub">month ${fmtMoney(m.month_allowance)} • last 7d ${weekText} • week limit $${m.weekly?Math.round(m.weekly):'-'} • 5h limit $${m.h5?Math.round(m.h5):'-'} • <b style="color:${color}">${status}</b></div><div class="bar-track" style="margin-top:6px"><div class="bar-fill" style="width:${Math.min(m.pct_month||0,100)}%;background:${color}"></div></div></div>`;
+    });
+    if(!sorted.length) html+='<div class="small">No Go-limit models matched.</div>';
+    goEl.innerHTML=html;
+  } else {
+    goEl.innerHTML='<div class="small">Pick a Plan above to see the current month and last 7 days against each model limit. Free models show Unlimited.</div>';
+  }
+
+  // Diagnostics
+  document.getElementById('diagFiles').innerHTML=result.filesInfo.map(f=> `<div>• ${esc(f.name)} — ${f.rows} rows • headers: <span class="small">${esc(f.headers.join(', '))}</span></div>`).join('');
+  document.getElementById('diagCols').textContent=JSON.stringify(result.detectedCols, null, 2);
+  document.getElementById('diagDedupe').textContent=`${result.before} → ${result.after} (${result.dupesRemoved} dupes removed) • dedupe=${opts.dedupe}`;
+  document.getElementById('diagBillable').textContent=`billableOnly=${opts.billableOnly} • ${result.filtered} rows kept`;
+
+  // Raw table
+  renderRawTable(result.filteredRows);
+
+  document.getElementById('analysis').scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+function renderRawTable(rows){
+  let search=(document.getElementById('rawSearch').value||'').toLowerCase();
+  let tbody=document.querySelector('#rawTable tbody');
+  tbody.innerHTML='';
+  let filtered=rows;
+  if(search) filtered=rows.filter(r=> [r.date,r.model,r.person,r.billing_source].join(' ').toLowerCase().includes(search));
+  filtered.slice(0,400).forEach(r=>{
+    let tr=document.createElement('tr');
+    tr.innerHTML=`<td class="mono small">${esc(r.date)}</td><td class="mono small">${esc(r.model)}</td><td class="mono small">${esc(r.person)}</td><td class="mono small">${fmtMoney(r.cost)}</td><td class="mono small">${fmtMoney(r.allowance)}</td><td><span class="badge ${r.billing_source==='balance'?'ok':''}">${esc(r.billing_source)}</span></td><td class="small">${r.is_billable?'Yes':'No'}</td>`;
+    tbody.appendChild(tr);
+  });
+  if(filtered.length>400){
+    let tr=document.createElement('tr'); tr.innerHTML=`<td colspan="7" class="small" style="text-align:center">… ${filtered.length-400} more rows hidden — download detailed CSV for full.</td>`; tbody.appendChild(tr);
+  }
+}
+
+// ---------- Events ----------
+function getOpts(){
+  return {
+    plan: document.getElementById('plan').value || null,
+    billableOnly: document.getElementById('billableOnly').checked,
+    dedupe: document.getElementById('dedupe').checked,
+    dateFrom: document.getElementById('dateFrom').value.trim() || null,
+    dateTo: document.getElementById('dateTo').value.trim() || null,
+  };
+}
+document.getElementById('analyzeBtn').addEventListener('click', async()=>{
+  if(!currentFiles.length){ document.getElementById('importStatus').innerHTML='<div class="alert warn">Add CSV files first (drag-drop or click). Export them from Console: Activity → Usage → Export usage (7/30/90d).</div>'; return; }
+  document.getElementById('importStatus').innerHTML='<div class="alert info">Parsing…</div>';
+  // Read already have text; just analyze
+  try{
+    // currentFiles already has text if loaded via FileReader; if demo, they have text
+    let entries=currentFiles.map(f=> ({name:f.name, text:f.text}));
+    // If file text missing (should not), read again
+    let missing=entries.filter(e=> !e.text);
+    if(missing.length) throw new Error('Files not yet loaded — try again.');
+    let result=analyzeFiles(entries, getOpts());
+    if(result.before===0) throw new Error('No rows parsed — check CSV headers (need at least date/model/cost columns). Detected: '+JSON.stringify(result.detectedCols));
+    renderAnalysis(result, getOpts());
+    document.getElementById('importStatus').innerHTML='<div class="alert info">Analyzed '+result.before+' rows → '+result.after+' deduped → '+result.filtered+' kept • Files: '+currentFiles.map(f=>f.name).join(', ')+'</div>';
+  }catch(e){
+    document.getElementById('importStatus').innerHTML='<div class="alert error">'+esc(e.message)+'</div>';
+    console.error(e);
+  }
+});
+document.getElementById('clearBtn').addEventListener('click',()=>{
+  currentFiles=[]; renderFileList(); document.getElementById('analysis').classList.add('hidden'); document.getElementById('importStatus').innerHTML=''; document.getElementById('fileInput').value='';
+});
+document.getElementById('downloadPerModel').addEventListener('click',()=>{
+  if(!lastResult) return;
+  downloadCSV('per_model.csv', toPerModelCSV(lastResult.perModel));
+});
+document.getElementById('downloadDetailed').addEventListener('click',()=>{
+  if(!lastDetailedRows) return;
+  downloadCSV('detailed_merged.csv', toDetailedCSV(lastDetailedRows));
+});
+document.getElementById('modelSearch').addEventListener('input',()=> { if(lastResult) renderAnalysis(lastResult, getOpts()); });
+document.getElementById('hideFree').addEventListener('change',()=> { if(lastResult) renderAnalysis(lastResult, getOpts()); });
+document.getElementById('rawSearch').addEventListener('input',()=> { if(lastDetailedRows) renderRawTable(lastDetailedRows); });
+document.getElementById('plan').addEventListener('change',()=> { if(lastResult) renderAnalysis(lastResult, getOpts()); });
+document.getElementById('billableOnly').addEventListener('change',()=> { if(lastResult){ let entries=currentFiles.map(f=>({name:f.name,text:f.text})); let r=analyzeFiles(entries,getOpts()); renderAnalysis(r,getOpts()); }});
+document.getElementById('dedupe').addEventListener('change',()=> { if(lastResult){ let entries=currentFiles.map(f=>({name:f.name,text:f.text})); let r=analyzeFiles(entries,getOpts()); renderAnalysis(r,getOpts()); }});
+
+// File handling
+function handleFiles(fileList){
+  let files=[...fileList].filter(f=> f.name.toLowerCase().endsWith('.csv') || f.type==='text/csv' || true);
+  // Read each
+  let pending=files.length;
+  if(!pending) return;
+  document.getElementById('importStatus').innerHTML='<div class="alert info">Reading '+files.length+' file(s)…</div>';
+  files.forEach(file=>{
+    let reader=new FileReader();
+    reader.onload=e=>{
+      currentFiles.push({name:file.name, text:e.target.result, size:file.size});
+      pending--;
+      if(pending===0){ renderFileList(); document.getElementById('importStatus').innerHTML='<div class="alert info">'+currentFiles.length+' file(s) ready — click <b>Analyze</b>.</div>'; }
+    };
+    reader.onerror=()=>{ pending--; document.getElementById('importStatus').innerHTML='<div class="alert error">Failed to read '+file.name+'</div>'; };
+    reader.readAsText(file);
+  });
+}
+let drop=document.getElementById('drop');
+let fileInput=document.getElementById('fileInput');
+drop.addEventListener('click',()=> fileInput.click());
+drop.addEventListener('dragover',e=>{e.preventDefault(); drop.classList.add('dragover')});
+drop.addEventListener('dragleave',()=> drop.classList.remove('dragover'));
+drop.addEventListener('drop',e=>{e.preventDefault(); drop.classList.remove('dragover'); handleFiles(e.dataTransfer.files);});
+fileInput.addEventListener('change',()=> handleFiles(fileInput.files));
+
+// Demo: load examples via fetch (works when opened via file://? fetch may be blocked — fallback to embedded demo data)
+const DEMO_7D=`date,model,person,cost,billing_source,allowance
+2026-10-26,kimi-k3,alice,0.00,go,0.42
+2026-10-26,glm-5.3-flash,alice,0.00,go,0.08
+2026-10-26,claude-haiku-5-5,bob,1.20,balance,0.00
+2026-10-27,kimi-k3,alice,0.00,go,1.10
+2026-10-27,gpt-6-luna,alice,0.00,go-plus,0.30
+2026-10-27,qwen3.8-flash,bob,0.05,balance,0.00
+2026-10-28,muse-spark-1.2-contributor,alice,0.00,free,0.00
+2026-10-28,kimi-k2.7-code,alice,0.00,go,0.15
+2026-10-29,kimi-k3,alice,2.40,balance,0.00
+2026-10-30,deepseek-v4.1-flash,alice,0.00,go,0.12
+2026-11-01,kimi-k3,bob,0.00,go,0.90
+2026-11-02,glm-5.3,bob,0.80,balance,0.00`;
+const DEMO_30D=`date,model,person,cost,billing_source,allowance,list_cost
+2026-10-05,kimi-k3,alice,0.00,go,0.35,0.35
+2026-10-06,kimi-k3,alice,0.00,go,0.40,0.40
+2026-10-10,claude-haiku-5-5,bob,0.90,balance,0.00,0.90
+2026-10-15,mimo-v2.6-flash,alice,0.00,go,0.05,0.05
+2026-10-20,gpt-5.6-luna,alice,0.00,go-plus,0.55,0.55
+2026-10-22,qwen3.7-plus,bob,3.10,balance,0.00,3.20
+2026-10-26,kimi-k3,alice,0.00,go,0.42,0.42
+2026-10-26,glm-5.3-flash,alice,0.00,go,0.08,0.08
+2026-10-26,claude-haiku-5-5,bob,1.20,balance,0.00,1.20
+2026-10-27,kimi-k3,alice,0.00,go,1.10,1.10
+2026-10-27,gpt-6-luna,alice,0.00,go-plus,0.30,0.30
+2026-10-28,muse-spark-1.2-contributor,alice,0.00,free,0.00,0.00
+2026-10-28,kimi-k2.7-code,alice,0.00,go,0.15,0.15
+2026-10-29,kimi-k3,alice,2.40,balance,0.00,2.40
+2026-10-30,deepseek-v4.1-flash,alice,0.00,go,0.12,0.12
+2026-11-01,kimi-k3,bob,0.00,go,0.90,0.90
+2026-11-02,glm-5.3,bob,0.80,balance,0.00,0.80`;
+document.getElementById('demoBtn').addEventListener('click',()=>{
+  currentFiles=[
+    {name:'usage_7d_example.csv', text:DEMO_7D, size:DEMO_7D.length},
+    {name:'usage_30d_example.csv', text:DEMO_30D, size:DEMO_30D.length},
+  ];
+  renderFileList();
+  // Auto-analyze
+  document.getElementById('importStatus').innerHTML='<div class="alert info">Loaded demo: 2 files (7d + 30d, 29 raw rows, overlapping days will be deduped). Click Analyze or it will auto-analyze…</div>';
+  setTimeout(()=> document.getElementById('analyzeBtn').click(), 300);
+});
+renderFileList();
+</script>
+</body>
+</html>
