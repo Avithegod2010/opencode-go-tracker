@@ -55,6 +55,7 @@ from opencode_tracker.go_limits import (
     load_cached_limits,
     sync_limits,
 )
+from opencode_tracker.preflight import check_key
 from opencode_tracker.windows import compute_windows, period_start, week_start
 
 BASE_DIR = Path(__file__).parent
@@ -230,6 +231,30 @@ def api_sync_limits():
         "models": len(result["limits"]),
         "limits": result["limits"],
     })
+
+@app.route("/api/key-check", methods=["POST"])
+def api_key_check():
+    """Verify a key against the model list endpoint without calling a model."""
+    data = request.get_json(silent=True) or {}
+    base_url = data.get("base_url") or os.getenv("OPENCODE_BASE_URL") or "https://opencode.ai/inference/go"
+    if base_url == "go":
+        base_url = "https://opencode.ai/inference/go"
+    if base_url in ("balance", "inference"):
+        base_url = "https://opencode.ai/inference"
+    try:
+        base_url = _validate_base_url(base_url)
+    except ValueError as e:
+        return json_error(f"Refusing base URL: {e}", 400)
+
+    body_key = (data.get("api_key") or "").strip()
+    env_key = (os.getenv("OPENCODE_API_KEY") or "").strip()
+    if not body_key and env_key and not _client_is_local():
+        return json_error("Non-local clients must send their own API key; the server key is used for loopback requests only.", 401)
+    api_key = body_key or env_key
+    if not api_key or not api_key.startswith("oc_sk_"):
+        return json_error("Missing or invalid API key. Create one at Console: Account > Personal API keys (needs Models > Request).", 401)
+
+    return jsonify(check_key(api_key, base_url))
 
 @app.route("/api/merge", methods=["POST"])
 def api_merge():

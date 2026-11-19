@@ -145,8 +145,9 @@ pre{white-space:pre-wrap;word-break:break-word;background:#070c16;border:1px sol
       <div class="grid2">
         <div>
           <label class="small">OPENCODE_API_KEY <span class="badge warn">stored only in browser localStorage if you tick save</span>
-            <div style="display:flex;gap:6px"><input id="apiKey" type="password" placeholder="oc_sk_..."/><button class="btn ghost" id="toggleKey" type="button">Show</button></div>
+            <div style="display:flex;gap:6px"><input id="apiKey" type="password" placeholder="oc_sk_..."/><button class="btn ghost" id="toggleKey" type="button">Show</button><button class="btn ghost" id="checkKeyBtn" type="button">Check key</button></div>
           </label>
+          <div id="keyCheck" class="small" style="margin-top:4px"></div>
           <label><input type="checkbox" id="saveKey"/> save key in this browser (localStorage)</label>
           <div class="controls" style="margin:8px 0">
             <label>Base URL <select id="baseUrl"><option value="https://opencode.ai/inference">Paid (balance) https://opencode.ai/inference</option><option value="https://opencode.ai/inference/go" selected>Go / Go Plus / Go Teams https://opencode.ai/inference/go</option><option value="custom">Custom…</option></select></label>
@@ -312,6 +313,27 @@ $('#toggleKey').addEventListener('click',()=>{
   keyInput.type = keyInput.type==='password' ? 'text' : 'password';
   $('#toggleKey').textContent = keyInput.type==='password' ? 'Show' : 'Hide';
 });
+function selectedBaseUrl(){
+  return $('#baseUrl').value==='custom' ? $('#baseUrlCustom').value.trim() : $('#baseUrl').value;
+}
+$('#checkKeyBtn').addEventListener('click', async()=>{
+  const key=keyInput.value.trim();
+  if(!key){ $('#keyCheck').innerHTML='<span class="badge warn">enter a key first</span>'; return; }
+  const base=selectedBaseUrl();
+  $('#keyCheck').textContent='Checking…';
+  try{
+    const res=await fetch('/api/key-check', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({api_key:key, base_url:base})});
+    const j=await res.json();
+    if(j.ok){
+      $('#keyCheck').innerHTML=`<span class="badge ok">key OK</span> ${esc(j.model_count)} models · ${esc(j.go_model_count)} Go · ${esc(j.key_prefix)}`;
+    }else{
+      $('#keyCheck').innerHTML=`<span class="badge warn">check failed</span> ${esc(j.error||'')}${j.hint? ' — '+esc(j.hint):''}`;
+    }
+  }catch(e){
+    $('#keyCheck').textContent='Check failed: '+e.message;
+  }
+});
 if(localStorage.getItem('oc_base_url')) $('#baseUrl').value=localStorage.getItem('oc_base_url') || 'https://opencode.ai/inference/go';
 $('#baseUrl').addEventListener('change',()=>{
   if($('#baseUrl').value==='custom') $('#baseUrlCustom').style.display='block';
@@ -407,7 +429,7 @@ $('#logBtn').addEventListener('click', async()=>{
   const apiKey=keyInput.value.trim();
   if(!apiKey){ $('#logStatus').innerHTML='<div class="alert warn">Enter OPENCODE_API_KEY (oc_sk_…). Create at Account → Personal API keys or Settings → Service accounts.</div>'; return; }
   localStorage.setItem('oc_api_key', apiKey); // always remember for next
-  const baseUrlVal=$('#baseUrl').value==='custom' ? $('#baseUrlCustom').value.trim() : $('#baseUrl').value;
+  const baseUrlVal=selectedBaseUrl();
   const payload={
     model: $('#logModel').value,
     message: $('#logMessage').value,

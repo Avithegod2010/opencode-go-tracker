@@ -162,6 +162,45 @@ def test_log_requires_a_valid_key(client):
     assert "OPENCODE_API_KEY" in res.get_json()["error"]
 
 
+def test_key_check_requires_a_key(client, monkeypatch):
+    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    res = client.post("/api/key-check", json={})
+    assert res.status_code == 401
+
+
+def test_key_check_rejects_bad_base_url(client):
+    res = client.post("/api/key-check", json={"api_key": "oc_sk_fake", "base_url": "https://evil.example"})
+    assert res.status_code == 400
+
+
+def test_key_check_returns_model_summary(app_module, client, monkeypatch):
+    monkeypatch.setattr(
+        app_module,
+        "check_key",
+        lambda key, base_url: {
+            "ok": True,
+            "status_code": 200,
+            "model_count": 27,
+            "go_model_count": 27,
+            "go_models": ["kimi-k3"],
+            "plans_seen": ["go"],
+            "error": None,
+            "hint": None,
+            "key_prefix": "oc_sk_12...",
+            "base_url": base_url + "/v1/models",
+        },
+    )
+    res = client.post(
+        "/api/key-check",
+        json={"api_key": "oc_sk_1234567890", "base_url": "https://opencode.ai/inference/go"},
+    )
+    body = res.get_json()
+    assert res.status_code == 200
+    assert body["ok"] is True
+    assert body["model_count"] == 27
+    assert body["go_model_count"] == 27
+
+
 def test_go_limits_lists_known_models(client):
     body = client.get("/api/go-limits").get_json()
     assert body["plans"] == ["go", "go_plus", "go_teams"]

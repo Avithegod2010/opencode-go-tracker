@@ -40,6 +40,7 @@ from .csv_merger import merge_csvs
 from .db import get_conn, query_totals, query_daily, recent
 from .go_limits import monthly_limit, sync_limits
 from .logger import OpencodeLogger, load_dotenv
+from .preflight import check_key
 from .windows import compute_windows, period_start, week_start
 
 
@@ -230,6 +231,38 @@ def cmd_sync_limits(args):
         print(f"  {model:<30} go ${entry['go']}  plus ${entry['go_plus']}  teams ${entry['go_teams']}")
 
 
+def cmd_key_check(args):
+    load_dotenv()
+    api_key = args.api_key or os.getenv("OPENCODE_API_KEY")
+    if not api_key:
+        print("Missing OPENCODE_API_KEY. Put it in .env or pass --api-key.")
+        print("Create one at Console: Account > Personal API keys (needs Models > Request).")
+        sys.exit(1)
+    base_url = args.base_url or os.getenv("OPENCODE_BASE_URL") or "https://opencode.ai/inference/go"
+    if base_url == "go":
+        base_url = "https://opencode.ai/inference/go"
+    if base_url in ("balance", "inference"):
+        base_url = "https://opencode.ai/inference"
+
+    result = check_key(api_key, base_url)
+    print(f"Key: {result['key_prefix']}  Base URL: {result['base_url']}")
+    print(
+        f"HTTP {result['status_code']}  models={result['model_count']}  "
+        f"Go models={result['go_model_count']}"
+    )
+    if result["ok"]:
+        print("Key OK. Models: Read/Request works.")
+        if result["go_models"]:
+            print("Go sample: " + ", ".join(result["go_models"][:8]))
+        if result["plans_seen"]:
+            print("Plans seen: " + ", ".join(result["plans_seen"]))
+    else:
+        print(f"Key check failed: {result['error']}")
+        if result["hint"]:
+            print(f"Hint: {result['hint']}")
+        sys.exit(1)
+
+
 def cmd_web(args):
     # launch Flask dashboard (same as app.py)
     import subprocess
@@ -262,10 +295,11 @@ def interactive():
     print("  [B] Logger - capture per-request cost/allowance via Inference API -> SQLite/CSV")
     print("      Needs: OPENCODE_API_KEY with Models: Request (Personal or Service account key)")
     print("  [R] Report - DB totals plus live 5h / weekly / monthly Go windows")
+    print("  [K] Key check - verify a key against the model list endpoint")
     print("  [S] Sync limits - refresh monthly limits from the Go model list API")
     print("  [W] Web dashboard - local website at http://localhost:8000")
     print("  [H] Help - docs links for Billing / Go / Budgets / Inference API")
-    choice = input("\nSelect [A/B/R/S/W/H] or Enter to see help: ").strip().lower()
+    choice = input("\nSelect [A/B/R/K/S/W/H] or Enter to see help: ").strip().lower()
     if choice == "a":
         print("\nExample A:")
         print('  python tracker.py csv-merge "exports/*.csv" -o totals.csv --plan go')
@@ -286,6 +320,9 @@ def interactive():
     elif choice == "r":
         print("\nReport: python tracker.py report --db opencode_usage.db --plan go_plus")
         print("Billing period renews on the 1st by default; use --period-start-day N for your anniversary.")
+    elif choice == "k":
+        print("\nKey check: python tracker.py key-check")
+        print("Calls /v1/models and reports model count + Go catalogue access.")
     elif choice == "s":
         print("\nSync limits: python tracker.py sync-limits")
         print("Fetches https://opencode.ai/inference/go/v1/models and caches go.monthly_usage.")
@@ -352,6 +389,11 @@ def build_parser():
     ps.add_argument("--base-url", default="https://opencode.ai/inference/go", help="Go base URL")
     ps.add_argument("--cache", help="Cache JSON path (default go_limits_cache.json)")
 
+    # key-check
+    pk = sub.add_parser("key-check", help="Verify a key against the model list endpoint")
+    pk.add_argument("--api-key", help="Override OPENCODE_API_KEY")
+    pk.add_argument("--base-url", help="Base URL (default OPENCODE_BASE_URL or Go)")
+
     # web
     pw = sub.add_parser("web", help="Launch local website dashboard (same as python app.py)")
     pw.add_argument("--host", default="127.0.0.1", help="Host (default 127.0.0.1, use 0.0.0.0 for LAN)")
@@ -379,6 +421,8 @@ def main():
         cmd_init_db(args)
     elif args.cmd == "sync-limits":
         cmd_sync_limits(args)
+    elif args.cmd == "key-check":
+        cmd_key_check(args)
     elif args.cmd == "web":
         cmd_web(args)
     else:
