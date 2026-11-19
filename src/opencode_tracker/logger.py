@@ -38,10 +38,11 @@ Billing_source values:
 from __future__ import annotations
 import csv
 import json
+import re
 import time
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 try:
     import requests
@@ -49,6 +50,47 @@ except ImportError:
     requests = None  # type: ignore
 
 from .db import get_conn, insert_request
+
+RETRY_STATUS = {500, 502, 503, 504}
+
+ERROR_HINTS = {
+    401: ("401_unauthorized", "Invalid, expired, or revoked API key."),
+    402: ("402_insufficient_funds", "Balance is zero. Add credits or enable Auto-recharge."),
+    403: ("403_forbidden", "Key lacks Models: Request, or the model is blocked by workspace privacy settings."),
+    404: ("404_not_found", "Endpoint or model not found."),
+    429: ("429_budget_exceeded", "Budget policy hit. Raise the budget or check Activity > Logs."),
+}
+
+CSV_COLUMNS = [
+    "timestamp", "model", "endpoint", "billing_source", "cost", "list_cost",
+    "allowance", "input_tokens", "output_tokens", "reasoning_tokens",
+    "cache_read", "cache_write_5m", "cache_write_1h", "prompt_tokens",
+    "completion_tokens", "estimated", "status", "request_id",
+    "profile", "plan", "member", "session_id", "project", "source",
+    "request_kind", "external_id", "http_status", "latency_ms",
+]
+
+
+class HttpResult(NamedTuple):
+    json: Optional[Dict[str, Any]]
+    request_id: Optional[str]
+    error: Optional[str]
+    status_code: Optional[int]
+    latency_ms: Optional[int]
+
+
+def classify_error(status_code: Optional[int] = None, message: str = "") -> Tuple[str, str]:
+    """Map an HTTP status or error message to (status_label, human_hint)."""
+    code = status_code
+    if code is None and message:
+        match = re.search(r"\b(4\d\d|5\d\d)\b", message)
+        if match:
+            code = int(match.group(1))
+    if code in ERROR_HINTS:
+        return ERROR_HINTS[code]
+    if code is not None and 500 <= code < 600:
+        return ("5xx_upstream", "Upstream error. Retry later.")
+    return ("error", "Request failed.")
 
 # ---------- env loading (no extra dep) ----------
 def load_dotenv(path: Path = Path(".env")):
@@ -173,6 +215,13 @@ class OpencodeLogger:
         api_key: Optional[str] = None,
         base_url: str = "https://opencode.ai/inference",
         provider_label: Optional[str] = None,
+        profile: Optional[str] = None,
+        plan: Optional[str] = None,
+        member: Optional[str] = None,
+        project: Optional[str] = None,
+        source: str = "log",
+        request_kind: str = "manual",
+        retries: Optional[int] = None,
     ):
         import os
         load_dotenv()
@@ -181,23 +230,38 @@ class OpencodeLogger:
         self.db_path = Path(db_path) if db_path else None
         self.csv_path = Path(csv_path) if csv_path else None
         self.provider_label = provider_label
+        self.profile = profile or os.getenv("OPENCODE_PROFILE") or None
+        self.plan = plan or os.getenv("OPENCODE_PLAN") or None
+        self.member = member or os.getenv("OPENCODE_MEMBER") or None
+        self.project = project or os.getenv("OPENCODE_PROJECT") or None
+        self.source = source
+        self.request_kind = request_kind
+        try:
+            self.retries = max(0, int(retries if retries is not None else os.getenv("OPENCODE_RETRIES", "2")))
+        except (TypeError, ValueError):
+            self.retries = 2
 
         if self.db_path:
             self.conn = get_conn(self.db_path)
         else:
             self.conn = None  # type: ignore
 
-        # ensure CSV header exists
+        # Keep an existing CSV header intact; new files get the full v2 columns.
+        self.csv_columns = list(CSV_COLUMNS)
         if self.csv_path:
             self.csv_path.parent.mkdir(parents=True, exist_ok=True)
-            if not self.csv_path.exists():
+            if self.csv_path.exists():
+                try:
+                    with open(self.csv_path, newline="", encoding="utf-8") as fh:
+                        reader = csv.reader(fh)
+                        header = next(reader, None)
+                    if header:
+                        self.csv_columns = header
+                except OSError:
+                    pass
+            else:
                 with open(self.csv_path, "w", newline="", encoding="utf-8") as fh:
-                    w = csv.writer(fh)
-                    w.writerow([
-                        "timestamp","model","endpoint","billing_source","cost","list_cost","allowance",
-                        "input_tokens","output_tokens","reasoning_tokens","cache_read","cache_write_5m","cache_write_1h",
-                        "prompt_tokens","completion_tokens","estimated","status","request_id"
-                    ])
+                    csv.writer(fh).writerow(self.csv_columns)
 
     def _headers(self) -> Dict[str, str]:
         if not self.api_key:
@@ -207,7 +271,20 @@ class OpencodeLogger:
             "Content-Type": "application/json",
         }
 
-    def _log_entry(self, model: str, endpoint: str, parsed: Dict[str, Any], status: str = "ok", error: Optional[str]=None, request_id: Optional[str]=None, raw_json: Optional[Dict]=None):
+    def _log_entry(
+        self,
+        model: str,
+        endpoint: str,
+        parsed: Dict[str, Any],
+        status: str = "ok",
+        error: Optional[str] = None,
+        request_id: Optional[str] = None,
+        raw_json: Optional[Dict] = None,
+        http_status: Optional[int] = None,
+        latency_ms: Optional[int] = None,
+        session_id: Optional[str] = None,
+        external_id: Optional[str] = None,
+    ):
         ts = datetime.now(timezone.utc).isoformat()
         tokens = parsed.get("tokens") or {}
         entry = {
@@ -231,26 +308,29 @@ class OpencodeLogger:
             "status": status,
             "error": error,
             "request_id": request_id,
+            "profile": self.profile,
+            "plan": self.plan,
+            "member": self.member,
+            "session_id": session_id or getattr(self, "session_id", None),
+            "project": self.project,
+            "source": self.source,
+            "request_kind": self.request_kind,
+            "external_id": external_id,
+            "http_status": http_status,
+            "latency_ms": latency_ms,
             "raw_json": json.dumps(raw_json or parsed.get("raw_usage") or {}, ensure_ascii=False)[:10000],
         }
         # DB
         if self.conn is not None:
             try:
-                insert_request(self.conn, entry)
+                insert_request(self.conn, entry, ignore_duplicate=bool(external_id))
             except Exception as e:
                 print(f"WARN DB insert failed: {e}")
         # CSV
         if self.csv_path:
             try:
                 with open(self.csv_path, "a", newline="", encoding="utf-8") as fh:
-                    w = csv.writer(fh)
-                    w.writerow([
-                        entry["timestamp"], entry["model"], entry["endpoint"], entry["billing_source"],
-                        entry["cost"], entry["list_cost"], entry["allowance"],
-                        entry["input_tokens"], entry["output_tokens"], entry["reasoning_tokens"],
-                        entry["cache_read"], entry["cache_write_5m"], entry["cache_write_1h"],
-                        entry["prompt_tokens"], entry["completion_tokens"], entry["estimated"], entry["status"], entry["request_id"]
-                    ])
+                    csv.writer(fh).writerow([entry.get(column, "") for column in self.csv_columns])
             except Exception as e:
                 print(f"WARN CSV append failed: {e}")
 
@@ -264,43 +344,99 @@ class OpencodeLogger:
         return entry
 
     # ----- endpoint helpers -----
-    def _post(self, path: str, payload: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Optional[str], Optional[str]]:
-        """Returns (json, request_id, error). Uses requests if available else urllib."""
+    def _sleep_backoff(self, attempt: int, retry_after: Optional[str] = None) -> None:
+        delay = min(5.0, 0.5 * (2 ** attempt))
+        if retry_after:
+            try:
+                delay = min(10.0, max(0.0, float(retry_after)))
+            except (TypeError, ValueError):
+                pass
+        if delay > 0:
+            time.sleep(delay)
+
+    def _post(self, path: str, payload: Dict[str, Any]) -> HttpResult:
+        """POST with retries for 5xx/network errors.
+
+        Returns status code and latency so they can be logged per request.
+        4xx responses are never retried (401/402/403/429 are actionable).
+        """
         url = self.base_url + path
         headers = self._headers()
-        data = json.dumps(payload).encode()
-        request_id = None
-        if requests is not None:
+        attempts = max(1, self.retries + 1)
+        last_error: Optional[str] = None
+        last_status: Optional[int] = None
+        last_latency: Optional[int] = None
+
+        if requests is None:
+            # urllib fallback, same retry policy.
+            import urllib.error
+            import urllib.request
+
+            data = json.dumps(payload).encode()
+            for attempt in range(attempts):
+                started = time.monotonic()
+                req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+                try:
+                    with urllib.request.urlopen(req, timeout=120) as resp:
+                        latency = int((time.monotonic() - started) * 1000)
+                        body = resp.read().decode()
+                        return HttpResult(json.loads(body), resp.headers.get("x-request-id"), None, resp.status, latency)
+                except urllib.error.HTTPError as e:
+                    latency = int((time.monotonic() - started) * 1000)
+                    body = e.read().decode()[:2000] if hasattr(e, "read") else str(e)
+                    last_error = f"HTTP {e.code}: {body[:1000]}"
+                    last_status = e.code
+                    last_latency = latency
+                    if e.code in RETRY_STATUS and attempt < attempts - 1:
+                        self._sleep_backoff(attempt, e.headers.get("Retry-After") if e.headers else None)
+                        continue
+                    return HttpResult({"error": body, "status": e.code}, None, last_error, e.code, latency)
+                except Exception as e:
+                    latency = int((time.monotonic() - started) * 1000)
+                    last_error = str(e)
+                    last_status = None
+                    last_latency = latency
+                    if attempt < attempts - 1:
+                        self._sleep_backoff(attempt)
+                        continue
+                    return HttpResult(None, None, last_error, None, latency)
+            return HttpResult(None, None, last_error, last_status, last_latency)
+
+        for attempt in range(attempts):
+            started = time.monotonic()
             try:
                 r = requests.post(url, headers=headers, json=payload, timeout=120)
+                latency = int((time.monotonic() - started) * 1000)
+                last_latency = latency
                 request_id = r.headers.get("x-request-id") or r.headers.get("request-id")
                 if r.status_code >= 400:
-                    # include 402 insufficient funds, 429 budget exceeded
                     err = f"HTTP {r.status_code}: {r.text[:1000]}"
                     try:
                         j = r.json()
-                    except:
+                    except ValueError:
                         j = {"error": err, "status": r.status_code}
-                    return j, request_id, err
-                j = r.json()
-                return j, request_id, None
+                    last_error = err
+                    last_status = r.status_code
+                    if r.status_code in RETRY_STATUS and attempt < attempts - 1:
+                        self._sleep_backoff(attempt, r.headers.get("Retry-After"))
+                        continue
+                    return HttpResult(j, request_id, err, r.status_code, latency)
+                try:
+                    j = r.json()
+                except ValueError:
+                    j = {"raw": r.text[:4000]}
+                return HttpResult(j, request_id, None, r.status_code, latency)
             except Exception as e:
-                return None, None, str(e)
-        else:
-            # urllib fallback
-            import urllib.request, urllib.error
-            req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-            try:
-                with urllib.request.urlopen(req, timeout=120) as resp:
-                    body = resp.read().decode()
-                    request_id = resp.headers.get("x-request-id")
-                    j = json.loads(body)
-                    return j, request_id, None
-            except urllib.error.HTTPError as e:
-                body = e.read().decode()[:2000] if hasattr(e, "read") else str(e)
-                return {"error": body, "status": e.code}, None, f"HTTP {e.code}: {body[:1000]}"
-            except Exception as e:
-                return None, None, str(e)
+                latency = int((time.monotonic() - started) * 1000)
+                last_error = str(e)
+                last_status = None
+                last_latency = latency
+                if attempt < attempts - 1:
+                    self._sleep_backoff(attempt)
+                    continue
+                return HttpResult(None, None, last_error, None, latency)
+
+        return HttpResult(None, None, last_error, last_status, last_latency)
 
     def chat_completions(
         self,
@@ -331,44 +467,62 @@ class OpencodeLogger:
         if stream:
             return self._chat_stream(path, payload, model)
 
-        j, req_id, err = self._post(path, payload)
-        if err or j is None:
+        res = self._post(path, payload)
+        if res.error or res.json is None:
             parsed = {"cost": None, "billing_source": None, "list_cost": None, "allowance": None, "tokens": {}, "prompt_tokens": None, "completion_tokens": None, "estimated": None}
-            status = "error"
-            # try to detect 402 vs 429 from err
-            if err and "402" in err:
-                status = "402_insufficient_funds"
-            elif err and "429" in err:
-                status = "429_budget_exceeded"
-            self._log_entry(model, path, parsed, status=status, error=err, request_id=req_id, raw_json=j or {"error": err})
-            raise RuntimeError(err or "unknown error")
-        else:
-            parsed = parse_usage(j)
-            req_id = req_id or j.get("id") or j.get("request_id")
-            self._log_entry(model, path, parsed, status="ok", request_id=req_id, raw_json=j)
-            return j
+            status, _hint = classify_error(res.status_code, res.error or "")
+            self._log_entry(
+                model, path, parsed, status=status, error=res.error,
+                request_id=res.request_id, raw_json=res.json or {"error": res.error},
+                http_status=res.status_code, latency_ms=res.latency_ms,
+            )
+            raise RuntimeError(res.error or "unknown error")
+        parsed = parse_usage(res.json)
+        req_id = res.request_id or res.json.get("id") or res.json.get("request_id")
+        self._log_entry(
+            model, path, parsed, status="ok", request_id=req_id, raw_json=res.json,
+            http_status=res.status_code, latency_ms=res.latency_ms,
+        )
+        return res.json
 
     def _chat_stream(self, path: str, payload: Dict[str, Any], model: str) -> Dict[str, Any]:
-        """Streaming via requests streaming SSE parse."""
-        import os
+        """Streaming via requests streaming SSE parse, with retry on initial 5xx."""
         url = self.base_url + path
         headers = self._headers()
         headers["Accept"] = "text/event-stream"
         if requests is None:
             raise RuntimeError("Streaming requires 'requests' package. pip install requests")
-        # Use requests stream
+
+        attempts = max(1, self.retries + 1)
+        started = time.monotonic()
+        r = None
+        for attempt in range(attempts):
+            r = requests.post(url, headers=headers, json=payload, stream=True, timeout=180)
+            if r.status_code in RETRY_STATUS and attempt < attempts - 1:
+                r.close()
+                self._sleep_backoff(attempt, r.headers.get("Retry-After"))
+                continue
+            break
+
         chunks: List[Dict[str, Any]] = []
+        logged = False
         try:
-            with requests.post(url, headers=headers, json=payload, stream=True, timeout=180) as r:
+            with r:
                 request_id = r.headers.get("x-request-id")
                 if r.status_code >= 400:
                     text = r.text[:2000]
                     err = f"HTTP {r.status_code}: {text}"
                     parsed = {"cost": None, "billing_source": None, "list_cost": None, "allowance": None, "tokens": {}}
-                    self._log_entry(model, path, parsed, status="error", error=err, request_id=request_id, raw_json={"error": text})
+                    status, _hint = classify_error(r.status_code, err)
+                    self._log_entry(
+                        model, path, parsed, status=status, error=err,
+                        request_id=request_id, raw_json={"error": text},
+                        http_status=r.status_code,
+                        latency_ms=int((time.monotonic() - started) * 1000),
+                    )
+                    logged = True
                     raise RuntimeError(err)
                 # SSE: data: {...}\n
-                buffer = ""
                 for line in r.iter_lines(decode_unicode=True):
                     if not line:
                         continue
@@ -377,19 +531,28 @@ class OpencodeLogger:
                         if data == "[DONE]":
                             break
                         try:
-                            j = json.loads(data)
-                            chunks.append(j)
-                        except:
+                            chunks.append(json.loads(data))
+                        except ValueError:
                             continue
-                # Last chunk should contain usage
                 parsed = parse_stream_chunks(chunks) if chunks else parse_usage({})
                 status = "ok" if parsed.get("cost") is not None else "ok_stream_no_usage"
-                self._log_entry(model, path, parsed, status=status, request_id=request_id, raw_json={"chunks": chunks[-1] if chunks else {}})
-                # Return aggregated fake response for caller convenience
+                self._log_entry(
+                    model, path, parsed, status=status, request_id=request_id,
+                    raw_json={"chunks": chunks[-1] if chunks else {}},
+                    http_status=r.status_code,
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                )
                 return {"chunks": chunks, "usage_parsed": parsed}
         except Exception as e:
+            if logged:
+                raise
             parsed = {"cost": None, "billing_source": None, "list_cost": None, "allowance": None, "tokens": {}}
-            self._log_entry(model, path, parsed, status="error", error=str(e), raw_json={})
+            status, _hint = classify_error(getattr(r, "status_code", None), str(e))
+            self._log_entry(
+                model, path, parsed, status=status, error=str(e), raw_json={},
+                http_status=getattr(r, "status_code", None),
+                latency_ms=int((time.monotonic() - started) * 1000),
+            )
             raise
 
     def anthropic_messages(
@@ -409,15 +572,22 @@ class OpencodeLogger:
             payload["stream"] = True
         if extra:
             payload.update(extra)
-        j, req_id, err = self._post(path, payload)
-        if err or j is None:
+        res = self._post(path, payload)
+        if res.error or res.json is None:
             parsed = {"cost": None, "billing_source": None, "list_cost": None, "allowance": None, "tokens": {}}
-            status = "402_insufficient_funds" if err and "402" in err else "429_budget_exceeded" if err and "429" in err else "error"
-            self._log_entry(model, path, parsed, status=status, error=err, request_id=req_id, raw_json=j or {})
-            raise RuntimeError(err or "unknown error")
-        parsed = parse_usage(j)
-        self._log_entry(model, path, parsed, status="ok", request_id=req_id or j.get("id"), raw_json=j)
-        return j
+            status, _hint = classify_error(res.status_code, res.error or "")
+            self._log_entry(
+                model, path, parsed, status=status, error=res.error,
+                request_id=res.request_id, raw_json=res.json or {},
+                http_status=res.status_code, latency_ms=res.latency_ms,
+            )
+            raise RuntimeError(res.error or "unknown error")
+        parsed = parse_usage(res.json)
+        self._log_entry(
+            model, path, parsed, status="ok", request_id=res.request_id or res.json.get("id"),
+            raw_json=res.json, http_status=res.status_code, latency_ms=res.latency_ms,
+        )
+        return res.json
 
     def responses(
         self,
@@ -432,14 +602,22 @@ class OpencodeLogger:
             payload["stream"] = True
         if extra:
             payload.update(extra)
-        j, req_id, err = self._post(path, payload)
-        if err or j is None:
+        res = self._post(path, payload)
+        if res.error or res.json is None:
             parsed = {"cost": None, "billing_source": None, "list_cost": None, "allowance": None, "tokens": {}}
-            self._log_entry(model, path, parsed, status="error", error=err, request_id=req_id, raw_json=j or {})
-            raise RuntimeError(err or "unknown error")
-        parsed = parse_usage(j)
-        self._log_entry(model, path, parsed, status="ok", request_id=req_id or j.get("id"), raw_json=j)
-        return j
+            status, _hint = classify_error(res.status_code, res.error or "")
+            self._log_entry(
+                model, path, parsed, status=status, error=res.error,
+                request_id=res.request_id, raw_json=res.json or {},
+                http_status=res.status_code, latency_ms=res.latency_ms,
+            )
+            raise RuntimeError(res.error or "unknown error")
+        parsed = parse_usage(res.json)
+        self._log_entry(
+            model, path, parsed, status="ok", request_id=res.request_id or res.json.get("id"),
+            raw_json=res.json, http_status=res.status_code, latency_ms=res.latency_ms,
+        )
+        return res.json
 
     def gemini_generate(
         self,
@@ -452,14 +630,22 @@ class OpencodeLogger:
         payload: Dict[str, Any] = {"contents": contents}
         if extra:
             payload.update(extra)
-        j, req_id, err = self._post(path, payload)
-        if err or j is None:
+        res = self._post(path, payload)
+        if res.error or res.json is None:
             parsed = {"cost": None, "billing_source": None, "list_cost": None, "allowance": None, "tokens": {}}
-            self._log_entry(model, path, parsed, status="error", error=err, request_id=req_id, raw_json=j or {})
-            raise RuntimeError(err or "unknown error")
-        parsed = parse_usage(j)
-        self._log_entry(model, path, parsed, status="ok", request_id=req_id, raw_json=j)
-        return j
+            status, _hint = classify_error(res.status_code, res.error or "")
+            self._log_entry(
+                model, path, parsed, status=status, error=res.error,
+                request_id=res.request_id, raw_json=res.json or {},
+                http_status=res.status_code, latency_ms=res.latency_ms,
+            )
+            raise RuntimeError(res.error or "unknown error")
+        parsed = parse_usage(res.json)
+        self._log_entry(
+            model, path, parsed, status="ok", request_id=res.request_id,
+            raw_json=res.json, http_status=res.status_code, latency_ms=res.latency_ms,
+        )
+        return res.json
 
 # CLI single-call helper
 def call_once(args):

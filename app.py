@@ -48,7 +48,7 @@ from flask import Flask, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 
 from opencode_tracker.csv_merger import merge_csvs
-from opencode_tracker.logger import OpencodeLogger, parse_usage
+from opencode_tracker.logger import OpencodeLogger, classify_error, parse_usage
 from opencode_tracker.db import get_conn, query_totals, query_daily, recent
 from opencode_tracker.go_limits import (
     all_limits,
@@ -494,21 +494,9 @@ def api_log():
         traceback.print_exc()
         # Error details may include 402/429
         err_msg = str(e)
-        code = 400
-        status_hint = "error"
-        if "402" in err_msg:
-            code = 402
-            status_hint = "402_insufficient_funds - add credits in Settings > Billing or enable Auto-recharge"
-        elif "429" in err_msg:
-            code = 429
-            status_hint = "429_budget_exceeded - raise budget in Controls, check Activity > Logs"
-        elif "401" in err_msg:
-            code = 401
-            status_hint = "401_unauthorized - invalid, expired, or revoked API key"
-        elif "403" in err_msg:
-            code = 403
-            status_hint = "403_forbidden - key lacks Models: Request, or the model is blocked in this workspace"
-        return jsonify({"ok": False, "error": err_msg, "hint": status_hint}), code
+        label, hint = classify_error(None, err_msg)
+        code = int(label[:3]) if label[:3].isdigit() else 400
+        return jsonify({"ok": False, "error": err_msg, "hint": f"{label} - {hint}"}), code
 
     # Extract assistant text preview (best effort)
     preview = ""
