@@ -1,4 +1,12 @@
-# Opencode Go Tracker — Local CSV + Inference Logger + Web App
+# OpenCode Go Tracker
+
+See your 5-hour, weekly and monthly OpenCode Go usage in a local dashboard.
+
+**[Run the dashboard](#quick-start)** · [Go usage windows](#go-windows-5h--week--month)
+
+![Sample report view showing 5-hour, weekly and monthly usage for three models](usage-sample.png)
+
+The example uses synthetic requests and the tracker’s own window calculations.
 
 Local tracker for **OpenCode Go / Console**. Three ways to use it, one shared library:
 
