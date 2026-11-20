@@ -51,12 +51,14 @@ from .db import (
     set_plan,
     update_profile_check,
 )
+from .daemon import run_daemon
 from .go_limits import monthly_limit, sync_limits
 from .importer import find_opencode_db, import_sessions
 from .logger import OpencodeLogger, load_dotenv
 from .preflight import check_key
 from .profiles import resolve_profile
 from .proxy import ProxyConfig, run_proxy
+from .watch import watch_loop
 from .windows import compute_windows, period_start, week_start
 
 
@@ -205,6 +207,51 @@ def cmd_import_sessions(args):
         print("Dry run: nothing written.")
     else:
         print(f"Wrote to {args.db}")
+
+
+def cmd_watch(args):
+    watch_loop(
+        args.db,
+        plan=args.plan or "go",
+        period_start_day=_period_day(args.period_start_day),
+        interval=args.interval,
+        once=args.once,
+    )
+
+
+def cmd_daemon(args):
+    load_dotenv()
+    profile = None
+    if args.profile:
+        conn = get_conn(args.db)
+        try:
+            profile = resolve_profile(conn, args.profile)
+        except KeyError as e:
+            print(str(e))
+            sys.exit(1)
+        finally:
+            conn.close()
+    plan = args.plan or (profile or {}).get("plan") or os.getenv("OPENCODE_PLAN") or "go"
+    member = args.member or (profile or {}).get("member") or os.getenv("OPENCODE_MEMBER")
+    project = args.project or (profile or {}).get("project") or os.getenv("OPENCODE_PROJECT")
+    limit_key = (profile or {}).get("key") or os.getenv("OPENCODE_API_KEY")
+    run_daemon(
+        db_path=Path(args.db),
+        csv_path=Path(args.csv),
+        period_start_day=_period_day(args.period_start_day),
+        host=args.host,
+        web_port=args.web_port,
+        proxy_port=args.proxy_port,
+        upstream=args.upstream,
+        profile=args.profile,
+        project=project,
+        member=member,
+        plan=plan,
+        sync_interval_minutes=args.sync_interval,
+        import_interval_minutes=args.import_interval,
+        limit_key=limit_key,
+        web=not args.no_web,
+    )
 
 
 def cmd_proxy(args):
@@ -569,6 +616,31 @@ def build_parser():
     pi = sub.add_parser("init-db", help="Create SQLite DB")
     pi.add_argument("--db", default="opencode_usage.db", help="SQLite DB path")
 
+    # watch
+    pwatch = sub.add_parser("watch", help="Live terminal view of 5h/week/month windows")
+    pwatch.add_argument("--db", default="opencode_usage.db")
+    pwatch.add_argument("--plan", default="go", choices=["go", "go_plus", "go-plus", "go_teams", "go-teams"])
+    pwatch.add_argument("--period-start-day", type=int)
+    pwatch.add_argument("--interval", type=float, default=5.0, help="Seconds between refreshes")
+    pwatch.add_argument("--once", action="store_true", help="Print once and exit")
+
+    # daemon
+    pdaemon = sub.add_parser("daemon", help="Run proxy + dashboard + periodic sync/import")
+    pdaemon.add_argument("--host", default="127.0.0.1")
+    pdaemon.add_argument("--web-port", type=int, default=8000)
+    pdaemon.add_argument("--proxy-port", type=int, default=8787)
+    pdaemon.add_argument("--upstream", default="https://opencode.ai")
+    pdaemon.add_argument("--db", default="opencode_usage.db")
+    pdaemon.add_argument("--csv", default="usage_log.csv")
+    pdaemon.add_argument("--plan", choices=["go", "go_plus", "go-plus", "go_teams", "go-teams"])
+    pdaemon.add_argument("--period-start-day", type=int)
+    pdaemon.add_argument("--profile")
+    pdaemon.add_argument("--project")
+    pdaemon.add_argument("--member")
+    pdaemon.add_argument("--sync-interval", type=float, default=60, help="Minutes between limit syncs (0 disables)")
+    pdaemon.add_argument("--import-interval", type=float, default=0, help="Minutes between session imports (0 disables)")
+    pdaemon.add_argument("--no-web", action="store_true", help="Run proxy only")
+
     # proxy
     pproxy = sub.add_parser("proxy", help="Run the local reverse proxy that logs every inference request")
     pproxy.add_argument("--host", default="127.0.0.1", help="Bind host (default 127.0.0.1)")
@@ -659,6 +731,10 @@ def main():
         cmd_import_sessions(args)
     elif args.cmd == "proxy":
         cmd_proxy(args)
+    elif args.cmd == "watch":
+        cmd_watch(args)
+    elif args.cmd == "daemon":
+        cmd_daemon(args)
     elif args.cmd == "sync-limits":
         cmd_sync_limits(args)
     elif args.cmd == "key-check":
