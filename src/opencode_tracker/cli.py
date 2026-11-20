@@ -113,7 +113,20 @@ def cmd_report(args):
         sys.exit(1)
     conn = get_conn(db)
     print(f"Report from {db}\n" + "=" * 78)
-    rows = query_totals(conn)
+    filters = {}
+    for key in ("model", "member", "profile", "project", "source", "status"):
+        value = getattr(args, key, None)
+        if value:
+            filters[key] = value
+    if args.date_from:
+        filters["from"] = args.date_from
+    if args.date_to:
+        filters["to"] = args.date_to
+    if args.session:
+        filters["session_id"] = args.session
+    if filters:
+        print("Filters: " + ", ".join(f"{key}={value}" for key, value in filters.items()))
+    rows = query_totals(conn, filters)
     if not rows:
         print("No logged requests yet. Use: python tracker.py log --model <model> --message 'hi'")
         conn.close()
@@ -132,13 +145,13 @@ def cmd_report(args):
 
     # Daily spark
     print("\nDaily cost:")
-    for d in query_daily(conn):
+    for d in query_daily(conn, filters):
         print(f"  {d['day']}  ${d['cost']:.4f}  allowance=${d['allowance'] or 0:.4f}  n={d['n']}")
 
     # Live Go windows (5h / week / month)
     if args.plan:
         day = _period_day(args.period_start_day)
-        ws = compute_windows(conn, args.plan, period_start_day=day)
+        ws = compute_windows(conn, args.plan, period_start_day=day, filters=filters)
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc)
         print(f"\nGo windows vs {args.plan} (5h=20%, week=50%, month=100%)")
@@ -162,7 +175,7 @@ def cmd_report(args):
 
     # Recent
     print("\nRecent 10 requests:")
-    for r in recent(conn, 10):
+    for r in recent(conn, 10, filters):
         print(f"  [{r['timestamp'][:19]}] {r['model']} {r['billing_source']} cost={r['cost']} allowance={r['allowance']} tokens={r['input_tokens']}/{r['output_tokens']} cache_read={r['cache_read']} status={r['status']}")
     conn.close()
 
@@ -611,6 +624,15 @@ def build_parser():
     pr.add_argument("--csv", default="usage_log.csv", help="CSV path (info only)")
     pr.add_argument("--plan", choices=["go", "go_plus", "go-plus", "go_teams", "go-teams"], help="Show Go window %%")
     pr.add_argument("--period-start-day", type=int, help="Day of month the paid period renews (default 1 or OPENCODE_PERIOD_START_DAY)")
+    pr.add_argument("--from", dest="date_from", help="Start date/ISO timestamp (inclusive)")
+    pr.add_argument("--to", dest="date_to", help="End date/ISO timestamp (inclusive)")
+    pr.add_argument("--model", help="Filter by model")
+    pr.add_argument("--member", help="Filter by member label")
+    pr.add_argument("--profile", help="Filter by profile label")
+    pr.add_argument("--project", help="Filter by project label")
+    pr.add_argument("--session", help="Filter by session id")
+    pr.add_argument("--source", help="Filter by source (log/proxy/import)")
+    pr.add_argument("--status", help="Filter by status")
 
     # init-db
     pi = sub.add_parser("init-db", help="Create SQLite DB")

@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .go_limits import monthly_limit, normalize_model
+from .db import build_where
 
 FIVE_HOURS = timedelta(hours=5)
 
@@ -125,6 +126,7 @@ def compute_windows(
     plan: str = "go",
     now: Optional[datetime] = None,
     period_start_day: int = 1,
+    filters: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """Per-model Go usage for the active 5h / week / month windows.
 
@@ -137,6 +139,7 @@ def compute_windows(
         five_hour_start, status
 
     Only models with Go allowance in at least one window are returned.
+    Filters use the same keys as db.build_where (from/to/model/member/...).
     """
     now = _utc(now)
     p_start = period_start(now, period_start_day)
@@ -145,9 +148,16 @@ def compute_windows(
     recent = now - 2 * FIVE_HOURS
     bound = min(p_start, w_start, recent)
 
+    clauses = ["timestamp >= ?"]
+    params: List[Any] = [bound.isoformat()]
+    extra_where, extra_params = build_where(filters)
+    if extra_where:
+        clauses.append(extra_where.replace(" WHERE ", "", 1))
+        params.extend(extra_params)
+
     rows = conn.execute(
-        "SELECT timestamp, model, allowance FROM requests WHERE timestamp >= ?",
-        (bound.isoformat(),),
+        f"SELECT timestamp, model, allowance FROM requests WHERE {' AND '.join(clauses)}",
+        params,
     ).fetchall()
 
     month_used: Dict[str, float] = defaultdict(float)

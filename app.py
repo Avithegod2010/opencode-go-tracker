@@ -50,7 +50,15 @@ from werkzeug.utils import secure_filename
 
 from opencode_tracker.csv_merger import merge_csvs
 from opencode_tracker.logger import OpencodeLogger, classify_error, parse_usage
-from opencode_tracker.db import get_conn, list_profiles, query_totals, query_daily, recent
+from opencode_tracker.db import (
+    build_where,
+    get_conn,
+    list_profiles,
+    query_daily,
+    query_distinct,
+    query_totals,
+    recent,
+)
 from opencode_tracker.go_limits import (
     all_limits,
     load_cached_limits,
@@ -151,6 +159,23 @@ def _load_profile(name: Optional[str]) -> Optional[dict]:
         conn.close()
 
 
+FILTER_KEYS = ("from", "to", "model", "member", "profile", "project", "session", "source", "status")
+
+
+def _request_filters() -> dict:
+    """Read report filters from the query string (repeatable values allowed)."""
+    filters = {}
+    for key in FILTER_KEYS:
+        values = [v for v in request.args.getlist(key) if v != ""]
+        if not values:
+            continue
+        if key == "session":
+            filters["session_id"] = values if len(values) > 1 else values[0]
+        else:
+            filters[key] = values if len(values) > 1 else values[0]
+    return filters
+
+
 def _validate_base_url(url: str) -> str:
     parts = urlsplit(url or "")
     if parts.scheme != "https":
@@ -213,6 +238,22 @@ def api_profiles():
     finally:
         conn.close()
     return jsonify({"ok": True, "profiles": [profile_summary(row) for row in rows]})
+
+@app.route("/api/filters/options")
+def api_filter_options():
+    conn = get_conn(str(DB_PATH))
+    try:
+        payload = {
+            "models": query_distinct(conn, "model"),
+            "members": query_distinct(conn, "member"),
+            "profiles": query_distinct(conn, "profile"),
+            "projects": query_distinct(conn, "project"),
+            "sessions": query_distinct(conn, "session_id"),
+            "sources": query_distinct(conn, "source"),
+        }
+    finally:
+        conn.close()
+    return jsonify({"ok": True, **payload})
 
 @app.route("/api/go-limits")
 def go_limits():
@@ -434,20 +475,31 @@ def api_report():
     except (TypeError, ValueError):
         period_day = PERIOD_START_DAY
     period_day = max(1, min(31, period_day))
+    filters = _request_filters()
 
     try:
         conn = get_conn(str(DB_PATH))
-        rows = query_totals(conn)
-        daily = query_daily(conn)
-        rec = recent(conn, 20)
+        rows = query_totals(conn, filters)
+        daily = query_daily(conn, filters)
+        rec = recent(conn, 20, filters)
         p_start = period_start(start_day=period_day)
+        where_nodate, params_nodate = build_where(
+            {k: v for k, v in filters.items() if k not in ("from", "to")}
+        )
+        clauses = ["timestamp >= ?"]
+        params = [p_start.isoformat()]
+        if where_nodate:
+            clauses.append(where_nodate.replace(" WHERE ", "", 1))
+            params.extend(params_nodate)
         month_totals = conn.execute(
             "SELECT COALESCE(SUM(cost),0) AS cost, COALESCE(SUM(allowance),0) AS allowance, "
             "COALESCE(SUM(list_cost),0) AS list_cost, COUNT(*) AS n "
-            "FROM requests WHERE timestamp >= ?",
-            (p_start.isoformat(),),
+            f"FROM requests WHERE {' AND '.join(clauses)}",
+            params,
         ).fetchone()
-        windows = compute_windows(conn, plan, period_start_day=period_day) if plan else []
+        windows = compute_windows(
+            conn, plan, period_start_day=period_day, filters=filters
+        ) if plan else []
         conn.close()
     except Exception as e:
         return json_error(f"DB read failed: {e}", 500)
@@ -495,6 +547,7 @@ def api_report():
         "recent": [dict(r) for r in rec],
         "go_pct": go_pct,
         "windows": windows,
+        "filters": filters,
         "window_meta": {
             "as_of": datetime.now(timezone.utc).isoformat(),
             "period_start": p_start.isoformat(),

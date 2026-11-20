@@ -19,15 +19,17 @@ def make_conn(tmp_path):
     return get_conn(tmp_path / "windows.db")
 
 
-def add(conn, when, model, allowance=0.0, cost=0.0, billing="go"):
-    insert_request(conn, {
+def add(conn, when, model, allowance=0.0, cost=0.0, billing="go", **extra):
+    entry = {
         "timestamp": when.isoformat() if isinstance(when, datetime) else when,
         "model": model,
         "billing_source": billing,
         "cost": cost,
         "allowance": allowance,
         "status": "ok",
-    })
+    }
+    entry.update(extra)
+    insert_request(conn, entry)
 
 
 def test_period_start_calendar_and_anniversary():
@@ -119,4 +121,18 @@ def test_future_rows_are_ignored(tmp_path):
     conn = make_conn(tmp_path)
     add(conn, NOW + timedelta(hours=1), "kimi-k3", 2.0)
     assert compute_windows(conn, "go", now=NOW, period_start_day=1) == []
+    conn.close()
+
+
+def test_compute_windows_respects_filters(tmp_path):
+    conn = make_conn(tmp_path)
+    add(conn, NOW - timedelta(hours=1), "kimi-k3", 1.0, profile="work", project="tracker")
+    add(conn, NOW - timedelta(hours=1), "kimi-k3", 2.0, profile="personal", project="other")
+
+    filtered = compute_windows(conn, "go", now=NOW, period_start_day=1, filters={"profile": "work"})
+    assert len(filtered) == 1
+    assert filtered[0]["month_used"] == pytest.approx(1.0)
+    assert filtered[0]["five_hour_used"] == pytest.approx(1.0)
+
+    assert compute_windows(conn, "go", now=NOW, period_start_day=1, filters={"project": "missing"}) == []
     conn.close()

@@ -32,7 +32,7 @@ header{position:sticky;top:0;z-index:10;background:rgba(11,15,20,.92);backdrop-f
 .drop input{display:none}
 .controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:12px 0}
 .controls label{font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center}
-select,input[type=text],input[type=password],textarea{width:100%;background:#0b1220;border:1px solid #263554;color:var(--text);border-radius:8px;padding:8px 10px;font-size:13px}
+select,input[type=text],input[type=password],input[type=date],textarea{width:100%;background:#0b1220;border:1px solid #263554;color:var(--text);border-radius:8px;padding:8px 10px;font-size:13px}
 textarea{min-height:84px;resize:vertical}
 .btn{appearance:none;border:1px solid var(--border);background:#12233a;color:var(--text);padding:8px 14px;border-radius:8px;cursor:pointer;font-weight:600;font-size:13px;white-space:nowrap}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:white}
@@ -204,6 +204,17 @@ pre{white-space:pre-wrap;word-break:break-word;background:#070c16;border:1px sol
         <label>Plan <select id="reportPlan"><option value="">(no %)</option><option value="go">Go</option><option value="go_plus">Go Plus</option><option value="go_teams">Go Teams</option></select></label>
         <label>Period start day <input type="number" id="reportPeriodDay" min="1" max="31" value="1" style="width:64px;background:#0b1220;border:1px solid #263554;color:var(--text);border-radius:8px;padding:8px 10px;font-size:13px"/></label>
         <span id="reportTotals" class="badge"></span>
+      </div>
+      <div class="controls" style="margin-top:6px">
+        <label>From <input type="date" id="filterFrom" style="width:150px"/></label>
+        <label>To <input type="date" id="filterTo" style="width:150px"/></label>
+        <label>Model <select id="filterModel" style="width:auto"><option value="">all</option></select></label>
+        <label>Member <select id="filterMember" style="width:auto"><option value="">all</option></select></label>
+        <label>Profile <select id="filterProfile" style="width:auto"><option value="">all</option></select></label>
+        <label>Project <select id="filterProject" style="width:auto"><option value="">all</option></select></label>
+        <label>Source <select id="filterSource" style="width:auto"><option value="">all</option></select></label>
+        <button id="filterApply" class="btn">Apply filters</button>
+        <button id="filterReset" class="btn ghost">Reset</button>
       </div>
       <div id="reportStatus"></div>
       <div id="reportContent" style="display:none">
@@ -509,7 +520,13 @@ async function loadReport(){
   $('#reportStatus').innerHTML='<div class="alert info">Loading…</div>';
   $('#reportContent').style.display='none';
   try{
-    const res=await fetch('/api/report?plan='+encodeURIComponent(plan)+'&period_start_day='+encodeURIComponent(periodDay));
+    const params=new URLSearchParams({plan:plan, period_start_day:periodDay});
+    [['#filterFrom','from'],['#filterTo','to'],['#filterModel','model'],['#filterMember','member'],
+     ['#filterProfile','profile'],['#filterProject','project'],['#filterSource','source']].forEach(([sel,key])=>{
+      const value=$(sel).value;
+      if(value) params.set(key, value);
+    });
+    const res=await fetch('/api/report?'+params.toString());
     const j=await res.json();
     if(j.empty){ $('#reportStatus').innerHTML=`<div class="alert warn">${esc(j.message || 'No logged requests yet. Use Logger tab or CLI: python tracker.py log --model kimi-k3 --message "hi"')}</div>`; return; }
     $('#reportStatus').innerHTML='';
@@ -563,6 +580,27 @@ async function loadReport(){
 $('#reportRefresh').addEventListener('click',loadReport);
 $('#reportPlan').addEventListener('change',loadReport);
 $('#reportPeriodDay').addEventListener('change',loadReport);
+$('#filterApply').addEventListener('click',loadReport);
+$('#filterReset').addEventListener('click',()=>{
+  ['#filterFrom','#filterTo','#filterModel','#filterMember','#filterProfile','#filterProject','#filterSource']
+    .forEach(sel=>{ $(sel).value=''; });
+  loadReport();
+});
+fetch('/api/filters/options').then(r=>r.json()).then(j=>{
+  const fill=(id, values)=>{
+    const sel=$(id);
+    (values||[]).forEach(value=>{
+      const o=document.createElement('option');
+      o.value=value; o.textContent=value;
+      sel.appendChild(o);
+    });
+  };
+  fill('#filterModel', j.models);
+  fill('#filterMember', j.members);
+  fill('#filterProfile', j.profiles);
+  fill('#filterProject', j.projects);
+  fill('#filterSource', j.sources);
+}).catch(()=>{});
 $('#importSessionsBtn').addEventListener('click', async()=>{
   const btn=$('#importSessionsBtn');
   btn.disabled=true; btn.textContent='Importing…';

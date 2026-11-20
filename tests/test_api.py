@@ -1,5 +1,5 @@
 import io
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -99,6 +99,55 @@ def test_report_empty_when_no_db(client):
     body = res.get_json()
     assert body["ok"] is True
     assert body["empty"] is True
+
+
+def test_report_filters_and_options(app_module, client):
+    conn = get_conn(str(app_module.DB_PATH))
+    now = datetime.now(timezone.utc)
+    insert_request(conn, {
+        "timestamp": now.isoformat(),
+        "model": "kimi-k3",
+        "billing_source": "go",
+        "allowance": 1.5,
+        "profile": "work",
+        "member": "alice",
+        "project": "tracker",
+        "source": "proxy",
+        "status": "ok",
+    })
+    insert_request(conn, {
+        "timestamp": (now - timedelta(days=2)).isoformat(),
+        "model": "glm-5.3",
+        "billing_source": "balance",
+        "cost": 0.5,
+        "profile": "personal",
+        "member": "bob",
+        "project": "other",
+        "source": "import",
+        "status": "ok",
+    })
+    conn.close()
+
+    res = client.get("/api/report?plan=go&profile=work&member=alice&project=tracker&source=proxy")
+    body = res.get_json()
+    assert body["ok"] is True
+    assert body["filters"] == {
+        "profile": "work", "member": "alice", "project": "tracker", "source": "proxy"
+    }
+    assert body["totals"]["cost"] == pytest.approx(0.0)
+    assert body["month_totals"]["n"] == 1
+    assert [w["model"] for w in body["windows"]] == ["kimi-k3"]
+    assert [r["model"] for r in body["recent"]] == ["kimi-k3"]
+
+    options = client.get("/api/filters/options").get_json()
+    assert options["models"] == ["glm-5.3", "kimi-k3"]
+    assert options["profiles"] == ["personal", "work"]
+    assert options["projects"] == ["other", "tracker"]
+    assert options["sources"] == ["import", "proxy"]
+
+    injected = client.get("/api/report?plan=go&profile=x%27%20OR%201%3D1--")
+    assert injected.status_code == 200
+    assert injected.get_json()["month_totals"]["n"] == 0
 
 
 def test_report_windows_use_current_period(app_module, client):
