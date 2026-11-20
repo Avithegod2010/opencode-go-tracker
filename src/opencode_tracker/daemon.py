@@ -11,6 +11,7 @@ import os
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -18,6 +19,7 @@ from .db import get_conn
 from .go_limits import sync_limits
 from .importer import find_opencode_db, import_sessions
 from .proxy import ProxyConfig, start_proxy
+from .report_html import write_report
 
 
 def load_web_app(db_path: Path, csv_path: Path, period_start_day: int):
@@ -60,6 +62,9 @@ def run_daemon(
     plan: Optional[str] = None,
     sync_interval_minutes: float = 60,
     import_interval_minutes: float = 0,
+    report_every_hours: float = 0,
+    report_dir: Path = Path("reports"),
+    report_format: str = "html",
     limit_key: Optional[str] = None,
     web: bool = True,
 ) -> None:
@@ -110,6 +115,30 @@ def run_daemon(
         threading.Thread(
             target=_periodic,
             args=(stop, import_interval_minutes * 60, do_import, "import"),
+            daemon=True,
+        ).start()
+
+    if report_every_hours and report_every_hours > 0:
+        def do_report():
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+            path = Path(report_dir) / f"report-{stamp}.{report_format}"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            conn = get_conn(db_path)
+            try:
+                write_report(
+                    conn,
+                    path,
+                    fmt=report_format,
+                    plan=plan or "go",
+                    period_start_day=period_start_day,
+                )
+            finally:
+                conn.close()
+            return f"wrote {path}"
+
+        threading.Thread(
+            target=_periodic,
+            args=(stop, report_every_hours * 3600, do_report, "report"),
             daemon=True,
         ).start()
 

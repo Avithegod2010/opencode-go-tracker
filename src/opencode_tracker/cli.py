@@ -62,6 +62,7 @@ from .logger import OpencodeLogger, load_dotenv
 from .preflight import check_key
 from .profiles import resolve_profile
 from .proxy import ProxyConfig, run_proxy
+from .report_html import write_report
 from .simulator import simulate_plans
 from .watch import watch_loop
 from .windows import compute_windows, period_start, week_start
@@ -225,6 +226,37 @@ def cmd_import_sessions(args):
         print("Dry run: nothing written.")
     else:
         print(f"Wrote to {args.db}")
+
+
+def cmd_export_report(args):
+    db = Path(args.db)
+    if not db.exists():
+        print(f"DB not found: {db}")
+        sys.exit(1)
+    filters = {}
+    for key in ("model", "profile", "project", "member"):
+        value = getattr(args, key, None)
+        if value:
+            filters[key] = value
+    if getattr(args, "date_from", None):
+        filters["from"] = args.date_from
+    if getattr(args, "date_to", None):
+        filters["to"] = args.date_to
+    out = Path(args.out)
+    conn = get_conn(db)
+    try:
+        write_report(
+            conn,
+            out,
+            fmt=args.format,
+            filters=filters or None,
+            plan=args.plan,
+            period_start_day=_period_day(args.period_start_day),
+            days=args.days,
+        )
+    finally:
+        conn.close()
+    print(f"Wrote {args.format} report to {out.resolve()}")
 
 
 def cmd_attribution(args):
@@ -431,6 +463,9 @@ def cmd_daemon(args):
         plan=plan,
         sync_interval_minutes=args.sync_interval,
         import_interval_minutes=args.import_interval,
+        report_every_hours=args.report_every,
+        report_dir=Path(args.report_dir),
+        report_format=args.report_format,
         limit_key=limit_key,
         web=not args.no_web,
     )
@@ -807,6 +842,21 @@ def build_parser():
     pi = sub.add_parser("init-db", help="Create SQLite DB")
     pi.add_argument("--db", default="opencode_usage.db", help="SQLite DB path")
 
+    # export-report
+    pex = sub.add_parser("export-report", help="Write a standalone HTML or JSON report")
+    pex.add_argument("--db", default="opencode_usage.db")
+    pex.add_argument("--out", default="report.html")
+    pex.add_argument("--format", choices=["html", "json"], default="html")
+    pex.add_argument("--plan", default="go", choices=["go", "go_plus", "go-plus", "go_teams", "go-teams"])
+    pex.add_argument("--period-start-day", type=int)
+    pex.add_argument("--days", type=int, default=30)
+    pex.add_argument("--from", dest="date_from")
+    pex.add_argument("--to", dest="date_to")
+    pex.add_argument("--model")
+    pex.add_argument("--profile")
+    pex.add_argument("--project")
+    pex.add_argument("--member")
+
     # attribution
     pat = sub.add_parser("attribution", help="Cost by project/session/member/profile/model")
     pat.add_argument("--by", default="project", choices=["project", "session", "member", "profile", "model"])
@@ -881,6 +931,9 @@ def build_parser():
     pdaemon.add_argument("--member")
     pdaemon.add_argument("--sync-interval", type=float, default=60, help="Minutes between limit syncs (0 disables)")
     pdaemon.add_argument("--import-interval", type=float, default=0, help="Minutes between session imports (0 disables)")
+    pdaemon.add_argument("--report-every", type=float, default=0, help="Hours between scheduled reports (0 disables)")
+    pdaemon.add_argument("--report-dir", default="reports", help="Directory for scheduled reports")
+    pdaemon.add_argument("--report-format", choices=["html", "json"], default="html")
     pdaemon.add_argument("--no-web", action="store_true", help="Run proxy only")
 
     # proxy
@@ -985,6 +1038,8 @@ def main():
         cmd_anomalies(args)
     elif args.cmd == "attribution":
         cmd_attribution(args)
+    elif args.cmd == "export-report":
+        cmd_export_report(args)
     elif args.cmd == "daemon":
         cmd_daemon(args)
     elif args.cmd == "sync-limits":
