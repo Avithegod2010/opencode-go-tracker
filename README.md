@@ -1,12 +1,25 @@
-# OpenCode Go Tracker
+<div align="center">
 
-See your 5-hour, weekly and monthly OpenCode Go usage in a local dashboard.
+<h1>OpenCode Go Tracker</h1>
 
-**[Run the dashboard](#quick-start)** · [Go usage windows](#go-windows-5h--week--month)
+<p><strong>See your 5-hour, weekly and monthly OpenCode Go usage in a local dashboard.</strong></p>
 
-![Sample report view showing 5-hour, weekly and monthly usage for three models](usage-sample.png)
+<p><strong><a href="#quick-start">📊 Run the dashboard</a></strong> · <a href="#go-windows-5h--week--month">⏱️ How usage windows work</a> · <a href="#command-reference">⌨️ Commands</a></p>
 
-The example uses synthetic requests and the tracker’s own window calculations.
+<picture>
+  <source media="(prefers-reduced-motion: reduce)" srcset="readme-hero.png" />
+  <img src="readme-hero.gif" width="820" alt="Three illustrated tiles labeled 5H, Week and Month" />
+</picture>
+
+</div>
+
+## 📊 Sample usage report
+
+<p align="center">
+  <a href="usage-sample.png"><img src="usage-sample.png" width="820" alt="Sample report with 5-hour, weekly and monthly usage for three models" /></a>
+</p>
+
+<p align="center"><sub>The tracker calculates these windows using synthetic requests.</sub></p>
 
 Local tracker for **OpenCode Go / Console**. Three ways to use it, one shared library:
 
@@ -16,7 +29,9 @@ Local tracker for **OpenCode Go / Console**. Three ways to use it, one shared li
 
 No data leaves your device except the Inference API calls you make and the public model-list request used by `sync-limits`.
 
-## What it does
+<a name="what-it-does"></a>
+
+## 🧰 What it does
 
 | Console area | What it shows | This tracker |
 |---|---|---|
@@ -37,7 +52,9 @@ Go window semantics come from <https://opencode.ai/docs/go#usage-limits>:
 
 ---
 
-## Quick start
+<a name="quick-start"></a>
+
+## 🚀 Quick start
 
 ```powershell
 git clone https://github.com/Avithegod2010/opencode-go-tracker.git
@@ -293,7 +310,9 @@ For your own HTTP calls, wrap them with `parse_usage(response_json)` and insert 
 
 ---
 
-## Go windows (5h / week / month)
+<a name="go-windows-5h--week--month"></a>
+
+## ⏱️ Go windows (5h / week / month)
 
 ```powershell
 opencode-tracker report --plan go
@@ -409,7 +428,9 @@ opencode-tracker sync-limits
 
 ---
 
-## Command reference
+<a name="command-reference"></a>
+
+## ⌨️ Command reference
 
 | Command | Purpose |
 |---|---|
@@ -496,7 +517,9 @@ Coverage: CSV dedupe/totals/billable filtering, window math (5h anchoring, Monda
 - **HTTP 429** → budget policy hit; raise it in Controls or check Activity → Logs.
 - **`web` says app.py not found** → the installed CLI can run the library, but the dashboard needs the repository checkout (`python app.py`).
 
-## Privacy
+<a name="privacy"></a>
+
+## 🔒 Privacy
 
 `.env`, `*.db`, `*.csv`, `reports/`, `go_limits_cache.json`, and `.pytest_cache/` are local and gitignored. No telemetry. Requests go only to `https://opencode.ai` and the base URL you configure. Session imports read usage metadata from OpenCode's local DB; they do not read prompts, accounts, or credentials.
 
