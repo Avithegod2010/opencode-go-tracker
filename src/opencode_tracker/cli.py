@@ -36,6 +36,9 @@ import os
 import sys
 from pathlib import Path
 
+from .analytics import analytics
+from .anomalies import detect_anomalies
+from .attribution import attribute
 from .csv_merger import merge_csvs
 from .db import (
     add_profile,
@@ -222,6 +225,71 @@ def cmd_import_sessions(args):
         print("Dry run: nothing written.")
     else:
         print(f"Wrote to {args.db}")
+
+
+def cmd_attribution(args):
+    db = Path(args.db)
+    if not db.exists():
+        print(f"DB not found: {db}")
+        sys.exit(1)
+    filters = {}
+    for key in ("model", "profile", "project", "member"):
+        value = getattr(args, key, None)
+        if value:
+            filters[key] = value
+    conn = get_conn(db)
+    try:
+        result = attribute(conn, by=args.by, filters=filters or None, limit=args.limit)
+    finally:
+        conn.close()
+    if not result["rows"]:
+        print("No data for this attribution.")
+        return
+    print(f"Attribution by {args.by}  |  cost ${result['total_cost']:.4f} | allowance ${result['total_allowance']:.4f}")
+    print(f"{'Name':<36} {'Cost $':>10} {'Share':>8} {'Allowance':>10} {'N':>5}")
+    print("-" * 76)
+    for row in result["rows"]:
+        share = f"{row['cost_share']:.1f}%" if row["cost_share"] is not None else "-"
+        label = row["name"] or "(none)"
+        if row.get("title"):
+            label = f"{row['title']} [{label[:12]}]"
+        print(f"{label[:36]:<36} {row['cost']:>10.4f} {share:>8} {row['allowance']:>10.4f} {row['n']:>5}")
+
+
+def cmd_anomalies(args):
+    db = Path(args.db)
+    if not db.exists():
+        print(f"DB not found: {db}")
+        sys.exit(1)
+    filters = {}
+    for key in ("model", "profile", "project", "member"):
+        value = getattr(args, key, None)
+        if value:
+            filters[key] = value
+    conn = get_conn(db)
+    try:
+        result = detect_anomalies(
+            conn,
+            filters=filters or None,
+            days=args.days,
+            baseline_days=args.baseline_days,
+            threshold=args.threshold,
+        )
+    finally:
+        conn.close()
+    rows = result["anomalies"]
+    if not rows:
+        print(f"No anomalies in the last {args.days} days (baseline {args.baseline_days}, threshold {args.threshold}).")
+        return
+    print(f"{'Day':<12} {'Metric':<10} {'Value':>10} {'Baseline':>10} {'Z':>7}  Top model")
+    print("-" * 78)
+    for row in rows:
+        z = "inf" if row["z"] is None else f"{row['z']:.2f}"
+        top = row["top_models"][0]["model"] if row["top_models"] else "-"
+        print(
+            f"{row['day']:<12} {row['metric']:<10} {row['value']:>10.4f} "
+            f"{row['baseline_mean']:>10.4f} {z:>7}  {top}"
+        )
 
 
 def cmd_plan(args):
@@ -739,6 +807,27 @@ def build_parser():
     pi = sub.add_parser("init-db", help="Create SQLite DB")
     pi.add_argument("--db", default="opencode_usage.db", help="SQLite DB path")
 
+    # attribution
+    pat = sub.add_parser("attribution", help="Cost by project/session/member/profile/model")
+    pat.add_argument("--by", default="project", choices=["project", "session", "member", "profile", "model"])
+    pat.add_argument("--limit", type=int, default=20)
+    pat.add_argument("--db", default="opencode_usage.db")
+    pat.add_argument("--model")
+    pat.add_argument("--profile")
+    pat.add_argument("--project")
+    pat.add_argument("--member")
+
+    # anomalies
+    pan = sub.add_parser("anomalies", help="Flag unusual daily cost or allowance")
+    pan.add_argument("--db", default="opencode_usage.db")
+    pan.add_argument("--days", type=int, default=30)
+    pan.add_argument("--baseline-days", type=int, default=14)
+    pan.add_argument("--threshold", type=float, default=2.0)
+    pan.add_argument("--model")
+    pan.add_argument("--profile")
+    pan.add_argument("--project")
+    pan.add_argument("--member")
+
     # plan
     pplan = sub.add_parser("plan", help="Track the active Go plan over time")
     psub = pplan.add_subparsers(dest="plan_cmd")
@@ -892,6 +981,10 @@ def main():
         cmd_plan_sim(args)
     elif args.cmd == "plan":
         cmd_plan(args)
+    elif args.cmd == "anomalies":
+        cmd_anomalies(args)
+    elif args.cmd == "attribution":
+        cmd_attribution(args)
     elif args.cmd == "daemon":
         cmd_daemon(args)
     elif args.cmd == "sync-limits":

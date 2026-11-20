@@ -525,6 +525,54 @@ def test_plan_sim_endpoint(app_module, client):
     assert body["models"][0]["model"] in ("kimi-k3", "glm-5.3-flash")
 
 
+def test_anomalies_endpoint(app_module, client):
+    conn = get_conn(str(app_module.DB_PATH))
+    now = datetime.now(timezone.utc)
+    for offset in range(10, 0, -1):
+        insert_request(conn, {
+            "timestamp": (now - timedelta(days=offset)).isoformat(),
+            "model": "kimi-k3",
+            "billing_source": "balance",
+            "cost": 0.1,
+            "status": "ok",
+        })
+    insert_request(conn, {
+        "timestamp": now.isoformat(),
+        "model": "glm-5.3",
+        "billing_source": "balance",
+        "cost": 3.0,
+        "status": "ok",
+    })
+    conn.close()
+    body = client.get("/api/anomalies?days=30&threshold=2").get_json()
+    assert body["ok"] is True
+    assert len(body["anomalies"]) == 1
+    assert body["anomalies"][0]["metric"] == "cost"
+    assert body["anomalies"][0]["top_models"][0]["model"] == "glm-5.3"
+
+
+def test_attribution_endpoint(app_module, client):
+    conn = get_conn(str(app_module.DB_PATH))
+    now = datetime.now(timezone.utc)
+    insert_request(conn, {
+        "timestamp": now.isoformat(), "model": "kimi-k3", "billing_source": "go",
+        "allowance": 2.0, "project": "tracker", "session_id": "ses_a",
+        "member": "alice", "status": "ok",
+    })
+    insert_request(conn, {
+        "timestamp": now.isoformat(), "model": "glm-5.3", "billing_source": "balance",
+        "cost": 1.0, "project": "other", "session_id": "ses_b",
+        "member": "bob", "status": "ok",
+    })
+    conn.close()
+    body = client.get("/api/attribution?by=project").get_json()
+    assert body["ok"] is True
+    assert [row["name"] for row in body["rows"]] == ["other", "tracker"]
+    assert body["total_cost"] == pytest.approx(1.0)
+    assert body["rows"][0]["cost_share"] == pytest.approx(100.0)
+    assert client.get("/api/attribution?by=nope").status_code == 400
+
+
 # --- security hardening -------------------------------------------------
 
 def test_rejects_cross_site_origin(client):

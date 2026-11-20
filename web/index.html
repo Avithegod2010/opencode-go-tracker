@@ -256,6 +256,7 @@ pre{white-space:pre-wrap;word-break:break-word;background:#070c16;border:1px sol
         <label>Range <select id="insightsDays" style="width:auto"><option value="7">7 days</option><option value="14">14 days</option><option value="30" selected>30 days</option><option value="90">90 days</option></select></label>
         <label>Plan <select id="insightsPlan" style="width:auto"><option value="go">Go</option><option value="go_plus">Go Plus</option><option value="go_teams">Go Teams</option></select></label>
         <label>Period day <input type="number" id="insightsPeriodDay" min="1" max="31" value="1" style="width:64px"/></label>
+        <label>Attribute by <select id="insightsBy" style="width:auto"><option value="project">project</option><option value="session">session</option><option value="member">member</option><option value="profile">profile</option><option value="model">model</option></select></label>
         <button id="insightsRefresh" class="btn primary">Refresh</button>
         <span id="insightsStatus" class="badge"></span>
       </div>
@@ -267,6 +268,10 @@ pre{white-space:pre-wrap;word-break:break-word;background:#070c16;border:1px sol
       <div id="insightsForecast"></div>
       <h3 style="font-size:13px;margin:16px 0 6px">Plan comparison</h3>
       <div id="insightsPlanSim"></div>
+      <h3 style="font-size:13px;margin:16px 0 6px">Anomalies</h3>
+      <div id="insightsAnomalies"></div>
+      <h3 style="font-size:13px;margin:16px 0 6px">Attribution</h3>
+      <div id="insightsAttribution"></div>
       <div class="grid2" style="margin-top:16px">
         <div>
           <h3 style="font-size:13px">Model mix</h3>
@@ -755,6 +760,30 @@ function renderPlanSim(el, data){
   html+=`<div class="small" style="margin-top:4px">${esc(data.note||'')}</div>`;
   el.innerHTML=html;
 }
+function renderAnomalies(el, data){
+  const rows=(data&&data.anomalies)||[];
+  if(!rows.length){ el.innerHTML='<span class="small">No anomalies in this range.</span>'; return; }
+  let html='<div style="overflow:auto;border:1px solid var(--border);border-radius:8px"><table class="table"><thead><tr><th>Day</th><th>Metric</th><th style="text-align:right">Value</th><th style="text-align:right">Baseline</th><th style="text-align:right">Z</th><th>Top model</th></tr></thead><tbody>';
+  rows.forEach(r=>{
+    const z=r.z==null?'inf':r.z.toFixed(2);
+    const top=(r.top_models&&r.top_models[0])?r.top_models[0].model:'-';
+    html+=`<tr><td class="mono">${esc(r.day)}</td><td>${esc(r.metric)}</td><td style="text-align:right">${Number(r.value).toFixed(4)}</td><td style="text-align:right">${Number(r.baseline_mean).toFixed(4)}</td><td style="text-align:right">${z}</td><td class="mono">${esc(top)}</td></tr>`;
+  });
+  html+='</tbody></table></div>';
+  el.innerHTML=html;
+}
+function renderAttribution(el, data){
+  const rows=(data&&data.rows)||[];
+  if(!rows.length){ el.innerHTML='<span class="small">No data for this attribution.</span>'; return; }
+  let html='<div style="overflow:auto;border:1px solid var(--border);border-radius:8px"><table class="table"><thead><tr><th>Name</th><th style="text-align:right">Cost</th><th style="text-align:right">Share</th><th style="text-align:right">Allowance</th><th style="text-align:right">N</th></tr></thead><tbody>';
+  rows.forEach(r=>{
+    const share=r.cost_share==null?'—':r.cost_share.toFixed(1)+'%';
+    const label=r.title?`${r.title} [${r.name}]`:(r.name||'(none)');
+    html+=`<tr><td><span class="mono small">${esc(label)}</span></td><td style="text-align:right">$${r.cost.toFixed(4)}</td><td style="text-align:right">${share}</td><td style="text-align:right">$${r.allowance.toFixed(4)}</td><td style="text-align:right">${r.n}</td></tr>`;
+  });
+  html+='</tbody></table></div>';
+  el.innerHTML=html;
+}
 async function loadInsights(){
   const status=$('#insightsStatus');
   status.textContent='loading…';
@@ -765,10 +794,15 @@ async function loadInsights(){
   if(from) fparams.set('from',from);
   if(to) fparams.set('to',to);
   try{
-    const [res, fres, sres]=await Promise.all([
+    const [res, fres, sres, ares, tres]=await Promise.all([
       fetch('/api/analytics?'+params.toString()),
       fetch('/api/forecast?'+fparams.toString()),
       fetch('/api/plan-sim?'+fparams.toString()),
+      fetch('/api/anomalies?'+params.toString()),
+      fetch('/api/attribution?'+new URLSearchParams({
+        by:$('#insightsBy').value||'project',
+        ...(from?{from:from}:{}), ...(to?{to:to}:{})
+      }).toString()),
     ]);
     const j=await res.json();
     if(!res.ok || !j.ok) throw new Error(j.error||'analytics failed');
@@ -790,6 +824,8 @@ async function loadInsights(){
     insightBars($('#insightsProjects'), j.by_project||[], 'cost');
     renderForecast($('#insightsForecast'), await fres.json());
     renderPlanSim($('#insightsPlanSim'), await sres.json());
+    renderAnomalies($('#insightsAnomalies'), await ares.json());
+    renderAttribution($('#insightsAttribution'), await tres.json());
     status.textContent=`${(j.by_model||[]).length} models · ${j.days.length} days`;
     status.className='badge ok';
   }catch(e){
@@ -800,6 +836,7 @@ $('#insightsRefresh').addEventListener('click',loadInsights);
 $('#insightsDays').addEventListener('change',loadInsights);
 $('#insightsPlan').addEventListener('change',loadInsights);
 $('#insightsPeriodDay').addEventListener('change',loadInsights);
+$('#insightsBy').addEventListener('change',loadInsights);
 </script>
 </body>
 </html>

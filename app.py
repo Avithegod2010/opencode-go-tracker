@@ -50,6 +50,8 @@ from werkzeug.utils import secure_filename
 
 from opencode_tracker.csv_merger import merge_csvs
 from opencode_tracker.analytics import analytics
+from opencode_tracker.anomalies import detect_anomalies
+from opencode_tracker.attribution import DIMENSIONS, attribute
 from opencode_tracker.forecast import forecast
 from opencode_tracker.logger import OpencodeLogger, classify_error, parse_usage
 from opencode_tracker.db import (
@@ -516,6 +518,48 @@ def api_plan_sim():
             conn.close()
     except Exception as e:
         return json_error(f"Plan simulation failed: {e}", 500)
+    return jsonify({"ok": True, "filters": filters, **result})
+
+@app.route("/api/attribution")
+def api_attribution():
+    by = request.args.get("by") or "project"
+    if by not in DIMENSIONS:
+        return json_error(f"Unsupported attribution: {by}", 400)
+    try:
+        limit = int(request.args.get("limit") or 20)
+    except (TypeError, ValueError):
+        limit = 20
+    filters = _request_filters()
+    try:
+        conn = get_conn(str(DB_PATH))
+        try:
+            result = attribute(conn, by=by, filters=filters, limit=max(1, min(200, limit)))
+        finally:
+            conn.close()
+    except Exception as e:
+        return json_error(f"Attribution failed: {e}", 500)
+    return jsonify({"ok": True, "filters": filters, **result})
+
+@app.route("/api/anomalies")
+def api_anomalies():
+    try:
+        days = int(request.args.get("days") or 30)
+        baseline = int(request.args.get("baseline_days") or 14)
+        threshold = float(request.args.get("threshold") or 2.0)
+    except (TypeError, ValueError):
+        return json_error("days, baseline_days, and threshold must be numeric", 400)
+    filters = _request_filters()
+    try:
+        conn = get_conn(str(DB_PATH))
+        try:
+            result = detect_anomalies(
+                conn, filters=filters, days=max(1, min(120, days)),
+                baseline_days=max(1, min(90, baseline)), threshold=max(0.1, min(10.0, threshold)),
+            )
+        finally:
+            conn.close()
+    except Exception as e:
+        return json_error(f"Anomaly detection failed: {e}", 500)
     return jsonify({"ok": True, "filters": filters, **result})
 
 @app.route("/api/import-sessions", methods=["POST"])
