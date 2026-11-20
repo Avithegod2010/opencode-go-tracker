@@ -156,52 +156,55 @@ def compute_windows(
         params.extend(extra_params)
 
     rows = conn.execute(
-        f"SELECT timestamp, model, allowance FROM requests WHERE {' AND '.join(clauses)}",
+        f"SELECT timestamp, model, allowance, plan FROM requests WHERE {' AND '.join(clauses)}",
         params,
     ).fetchall()
 
-    month_used: Dict[str, float] = defaultdict(float)
-    week_used: Dict[str, float] = defaultdict(float)
+    month_used: Dict[tuple, float] = defaultdict(float)
+    week_used: Dict[tuple, float] = defaultdict(float)
     recent_ts: List[datetime] = []
-    parsed_rows: List[Tuple[datetime, str, float]] = []
+    parsed_rows: List[tuple] = []
 
     for row in rows:
         ts = parse_ts(row["timestamp"])
         if ts is None or ts > now:
             continue
         model = normalize_model(str(row["model"] or ""))
+        effective_plan = row["plan"] or plan
         allowance = float(row["allowance"] or 0.0)
         if allowance <= 0:
             continue
-        parsed_rows.append((ts, model, allowance))
+        key = (model, effective_plan)
+        parsed_rows.append((ts, key, allowance))
         if ts >= recent:
             recent_ts.append(ts)
         if ts >= w_start:
-            week_used[model] += allowance
+            week_used[key] += allowance
         if ts >= p_start:
-            month_used[model] += allowance
+            month_used[key] += allowance
 
     f_start = five_hour_window_start(recent_ts, now=now)
-    five_used: Dict[str, float] = defaultdict(float)
+    five_used: Dict[tuple, float] = defaultdict(float)
     if f_start is not None:
-        for ts, model, allowance in parsed_rows:
+        for ts, key, allowance in parsed_rows:
             if ts >= f_start:
-                five_used[model] += allowance
+                five_used[key] += allowance
 
-    models = set(month_used) | set(week_used) | set(five_used)
+    keys = set(month_used) | set(week_used) | set(five_used)
     out: List[Dict[str, Any]] = []
-    for model in models:
-        limit = monthly_limit(model, plan)
+    for model, effective_plan in keys:
+        limit = monthly_limit(model, effective_plan)
         f_limit = limit * 0.2 if limit else None
         w_limit = limit * 0.5 if limit else None
-        m_used = month_used.get(model, 0.0)
-        w_used = week_used.get(model, 0.0)
-        f_used = five_used.get(model, 0.0)
+        m_used = month_used.get((model, effective_plan), 0.0)
+        w_used = week_used.get((model, effective_plan), 0.0)
+        f_used = five_used.get((model, effective_plan), 0.0)
         m_pct = _pct(m_used, limit)
         w_pct = _pct(w_used, w_limit)
         f_pct = _pct(f_used, f_limit)
         out.append({
             "model": model,
+            "plan": effective_plan,
             "limit": limit,
             "month_used": m_used,
             "month_limit": limit,

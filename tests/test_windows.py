@@ -136,3 +136,18 @@ def test_compute_windows_respects_filters(tmp_path):
 
     assert compute_windows(conn, "go", now=NOW, period_start_day=1, filters={"project": "missing"}) == []
     conn.close()
+
+
+def test_compute_windows_separates_plans(tmp_path):
+    conn = make_conn(tmp_path)
+    add(conn, NOW - timedelta(hours=1), "kimi-k3", 3.0, plan="go")
+    add(conn, NOW - timedelta(hours=1), "kimi-k3", 4.0, plan="go_plus")
+
+    windows = compute_windows(conn, "go", now=NOW, period_start_day=1)
+    by_plan = {w["plan"]: w for w in windows}
+    assert set(by_plan) == {"go", "go_plus"}
+    assert by_plan["go"]["limit"] == 15
+    assert by_plan["go"]["month_pct"] == pytest.approx(20.0)
+    assert by_plan["go_plus"]["limit"] == 60
+    assert by_plan["go_plus"]["month_pct"] == pytest.approx(4 / 60 * 100)
+    conn.close()

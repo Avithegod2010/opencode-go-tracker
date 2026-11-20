@@ -52,12 +52,14 @@ from .db import (
     update_profile_check,
 )
 from .daemon import run_daemon
+from .forecast import forecast
 from .go_limits import monthly_limit, sync_limits
 from .importer import find_opencode_db, import_sessions
 from .logger import OpencodeLogger, load_dotenv
 from .preflight import check_key
 from .profiles import resolve_profile
 from .proxy import ProxyConfig, run_proxy
+from .simulator import simulate_plans
 from .watch import watch_loop
 from .windows import compute_windows, period_start, week_start
 
@@ -159,14 +161,14 @@ def cmd_report(args):
         if not ws:
             print("  no Go allowance logged yet")
         else:
-            print(f"  {'Model':<28} {'5h used/limit':>22} {'Week used/limit':>24} {'Month used/limit':>26} {'Status':>9}")
+            print(f"  {'Model':<28} {'Plan':<10} {'5h used/limit':>22} {'Week used/limit':>24} {'Month used/limit':>26} {'Status':>9}")
             for w in ws:
                 def cell(used, limit, pct):
                     if limit is None:
                         return "unlimited"
                     return f"${used:.2f}/${limit:.0f} ({pct:.1f}%)"
                 print(
-                    f"  {w['model']:<28} "
+                    f"  {w['model']:<28} {(w['plan'] or '-'):<10} "
                     f"{cell(w['five_hour_used'], w['five_hour_limit'], w['five_hour_pct'] or 0):>22} "
                     f"{cell(w['week_used'], w['week_limit'], w['week_pct'] or 0):>24} "
                     f"{cell(w['month_used'], w['month_limit'], w['month_pct'] or 0):>26} "
@@ -220,6 +222,105 @@ def cmd_import_sessions(args):
         print("Dry run: nothing written.")
     else:
         print(f"Wrote to {args.db}")
+
+
+def cmd_plan(args):
+    conn = get_conn(args.db)
+    try:
+        action = args.plan_cmd or "current"
+        if action == "set":
+            if not args.name:
+                print("plan name required")
+                sys.exit(1)
+            set_plan(conn, args.name, effective_from=args.date_from, note=args.note)
+            print(f"Plan set to {args.name} from {args.date_from or 'now'}.")
+        elif action == "list":
+            rows = plan_history(conn)
+            if not rows:
+                print("No plan history. Run: opencode-tracker plan set go")
+            for row in rows:
+                print(f"{row['effective_from'][:19]}  {row['plan']:<10}  {row['note'] or ''}")
+        else:
+            print(current_plan(conn) or "No plan set.")
+    finally:
+        conn.close()
+
+
+def cmd_plan_sim(args):
+    db = Path(args.db)
+    if not db.exists():
+        print(f"DB not found: {db}")
+        sys.exit(1)
+    filters = {}
+    for key in ("model", "profile", "project", "member"):
+        value = getattr(args, key, None)
+        if value:
+            filters[key] = value
+    conn = get_conn(db)
+    try:
+        result = simulate_plans(
+            conn,
+            filters=filters or None,
+            period_start_day=_period_day(args.period_start_day),
+        )
+    finally:
+        conn.close()
+    print(f"Plan comparison for period from {result['period_start'][:10]}")
+    if not result["models"]:
+        print("No Go allowance in this period. Proxy/logger rows are needed (imports carry cost, not allowance).")
+        return
+    print(f"{'Plan':<12} {'Price':>8} {'Models over':>12} {'Overage $':>11} {'Coverage':>10} {'Fits':>6}")
+    print("-" * 66)
+    for row in result["plans"]:
+        coverage = f"{row['coverage_pct']:.0f}%" if row["coverage_pct"] is not None else "-"
+        print(
+            f"{row['plan']:<12} ${row['price']:>6} {row['models_over']:>12} "
+            f"${row['overage']:>10.2f} {coverage:>10} {'yes' if row['fits'] else 'no':>6}"
+        )
+    print(f"\n{result['note']}")
+
+
+def cmd_forecast(args):
+    db = Path(args.db)
+    if not db.exists():
+        print(f"DB not found: {db}")
+        sys.exit(1)
+    conn = get_conn(db)
+    try:
+        filters = {}
+        for key in ("model", "profile", "project", "member"):
+            value = getattr(args, key, None)
+            if value:
+                filters[key] = value
+        result = forecast(
+            conn,
+            args.plan or "go",
+            period_start_day=_period_day(args.period_start_day),
+            filters=filters or None,
+        )
+    finally:
+        conn.close()
+
+    meta = result["meta"]
+    print(f"Forecast vs {args.plan or 'go'}  |  as of {meta['as_of'][:19]}")
+    print(
+        f"Period {meta['period_start'][:10]} -> {meta['period_end'][:10]}  "
+        f"({meta['elapsed_days']:.1f} of {meta['period_days']:.1f} days, "
+        f"{meta['days_left_in_period']:.1f} left)"
+    )
+    if not result["models"]:
+        print("No Go allowance logged yet.")
+        return
+    print(f"{'Model':<28} {'Used':>10} {'Projected':>10} {'Proj %':>8} {'Days left':>10} {'5h proj %':>10} {'Risk':>8}")
+    print("-" * 92)
+    for row in result["models"]:
+        projected_pct = f"{row['projected_pct']:.1f}%" if row["projected_pct"] is not None else "-"
+        days_left = f"{row['days_to_limit']:.1f}" if row["days_to_limit"] is not None else "-"
+        five_pct = f"{row['five_hour_projected_pct']:.1f}%" if row["five_hour_projected_pct"] is not None else "-"
+        print(
+            f"{row['model']:<28} ${row['month_used']:>8.2f} ${row['projected']:>8.2f} "
+            f"{projected_pct:>8} {days_left:>10} {five_pct:>10} {row['risk']:>8}"
+        )
 
 
 def cmd_watch(args):
@@ -638,6 +739,36 @@ def build_parser():
     pi = sub.add_parser("init-db", help="Create SQLite DB")
     pi.add_argument("--db", default="opencode_usage.db", help="SQLite DB path")
 
+    # plan
+    pplan = sub.add_parser("plan", help="Track the active Go plan over time")
+    psub = pplan.add_subparsers(dest="plan_cmd")
+    pset = psub.add_parser("set", help="Record a plan change")
+    pset.add_argument("name", choices=["go", "go_plus", "go-plus", "go_teams", "go-teams"])
+    pset.add_argument("--from", dest="date_from", help="Effective date/ISO timestamp (default now)")
+    pset.add_argument("--note")
+    pset.add_argument("--db", default="opencode_usage.db")
+    psub.add_parser("list", help="Show plan history").add_argument("--db", default="opencode_usage.db")
+    psub.add_parser("current", help="Show the current plan").add_argument("--db", default="opencode_usage.db")
+
+    # plan-sim
+    psim = sub.add_parser("plan-sim", help="Compare current usage against Go / Plus / Teams limits")
+    psim.add_argument("--db", default="opencode_usage.db")
+    psim.add_argument("--period-start-day", type=int)
+    psim.add_argument("--model")
+    psim.add_argument("--profile")
+    psim.add_argument("--project")
+    psim.add_argument("--member")
+
+    # forecast
+    pf = sub.add_parser("forecast", help="Project period usage and days until each limit")
+    pf.add_argument("--db", default="opencode_usage.db")
+    pf.add_argument("--plan", default="go", choices=["go", "go_plus", "go-plus", "go_teams", "go-teams"])
+    pf.add_argument("--period-start-day", type=int)
+    pf.add_argument("--model")
+    pf.add_argument("--profile")
+    pf.add_argument("--project")
+    pf.add_argument("--member")
+
     # watch
     pwatch = sub.add_parser("watch", help="Live terminal view of 5h/week/month windows")
     pwatch.add_argument("--db", default="opencode_usage.db")
@@ -755,6 +886,12 @@ def main():
         cmd_proxy(args)
     elif args.cmd == "watch":
         cmd_watch(args)
+    elif args.cmd == "forecast":
+        cmd_forecast(args)
+    elif args.cmd == "plan-sim":
+        cmd_plan_sim(args)
+    elif args.cmd == "plan":
+        cmd_plan(args)
     elif args.cmd == "daemon":
         cmd_daemon(args)
     elif args.cmd == "sync-limits":

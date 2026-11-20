@@ -49,7 +49,7 @@ try:
 except ImportError:
     requests = None  # type: ignore
 
-from .db import get_conn, insert_request
+from .db import current_plan, get_conn, insert_request
 
 RETRY_STATUS = {500, 502, 503, 504}
 
@@ -287,6 +287,9 @@ class OpencodeLogger:
     ):
         ts = datetime.now(timezone.utc).isoformat()
         tokens = parsed.get("tokens") or {}
+        plan = self.plan
+        if not plan and self.conn is not None:
+            plan = current_plan(self.conn)
         entry = {
             "timestamp": ts,
             "model": model,
@@ -309,7 +312,7 @@ class OpencodeLogger:
             "error": error,
             "request_id": request_id,
             "profile": self.profile,
-            "plan": self.plan,
+            "plan": plan,
             "member": self.member,
             "session_id": session_id or getattr(self, "session_id", None),
             "project": self.project,

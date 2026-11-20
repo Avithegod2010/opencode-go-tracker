@@ -461,6 +461,70 @@ def test_analytics_endpoint(app_module, client):
     assert [row["model"] for row in filtered["by_model"]] == ["kimi-k3"]
 
 
+def test_forecast_endpoint(app_module, client):
+    conn = get_conn(str(app_module.DB_PATH))
+    insert_request(conn, {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "model": "kimi-k3",
+        "billing_source": "go",
+        "allowance": 1.5,
+        "status": "ok",
+    })
+    conn.close()
+    body = client.get("/api/forecast?plan=go&period_start_day=1").get_json()
+    assert body["ok"] is True
+    assert body["models"][0]["model"] == "kimi-k3"
+    assert body["models"][0]["projected"] >= 1.5
+    assert body["models"][0]["projected_pct"] is not None
+    assert body["meta"]["period_end"]
+
+
+def test_plan_endpoint(app_module, client):
+    body = client.get("/api/plan").get_json()
+    assert body["ok"] is True
+    assert body["current"] is None
+    assert body["history"] == []
+
+    res = client.post("/api/plan", json={
+        "plan": "go",
+        "effective_from": "2026-11-01T00:00:00+00:00",
+        "note": "start",
+    })
+    assert res.status_code == 200
+    body = client.get("/api/plan").get_json()
+    assert body["current"] == "go"
+    assert len(body["history"]) == 1
+
+    client.post("/api/plan", json={
+        "plan": "go_plus",
+        "effective_from": "2026-11-15T00:00:00+00:00",
+    })
+    body = client.get("/api/plan").get_json()
+    assert body["current"] == "go_plus"
+    assert [row["plan"] for row in body["history"]] == ["go", "go_plus"]
+    assert client.post("/api/plan", json={}).status_code == 400
+
+
+def test_plan_sim_endpoint(app_module, client):
+    conn = get_conn(str(app_module.DB_PATH))
+    now = datetime.now(timezone.utc)
+    for model, allowance in (("kimi-k3", 20.0), ("glm-5.3-flash", 50.0)):
+        insert_request(conn, {
+            "timestamp": now.isoformat(),
+            "model": model,
+            "billing_source": "go",
+            "allowance": allowance,
+            "status": "ok",
+        })
+    conn.close()
+    body = client.get("/api/plan-sim?period_start_day=1").get_json()
+    assert body["ok"] is True
+    plans = {row["plan"]: row for row in body["plans"]}
+    assert plans["go"]["models_over"] == 1
+    assert plans["go_plus"]["fits"] is True
+    assert body["models"][0]["model"] in ("kimi-k3", "glm-5.3-flash")
+
+
 # --- security hardening -------------------------------------------------
 
 def test_rejects_cross_site_origin(client):

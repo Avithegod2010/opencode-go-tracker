@@ -50,15 +50,19 @@ from werkzeug.utils import secure_filename
 
 from opencode_tracker.csv_merger import merge_csvs
 from opencode_tracker.analytics import analytics
+from opencode_tracker.forecast import forecast
 from opencode_tracker.logger import OpencodeLogger, classify_error, parse_usage
 from opencode_tracker.db import (
     build_where,
+    current_plan,
     get_conn,
     list_profiles,
+    plan_history,
     query_daily,
     query_distinct,
     query_totals,
     recent,
+    set_plan,
 )
 from opencode_tracker.go_limits import (
     all_limits,
@@ -68,6 +72,7 @@ from opencode_tracker.go_limits import (
 from opencode_tracker.importer import find_opencode_db, import_sessions
 from opencode_tracker.preflight import check_key
 from opencode_tracker.profiles import profile_summary, resolve_profile
+from opencode_tracker.simulator import simulate_plans
 from opencode_tracker.windows import compute_windows, period_start, week_start
 
 BASE_DIR = Path(__file__).parent
@@ -160,6 +165,14 @@ def _load_profile(name: Optional[str]) -> Optional[dict]:
         conn.close()
 
 
+def _current_plan() -> Optional[str]:
+    conn = get_conn(str(DB_PATH))
+    try:
+        return current_plan(conn)
+    finally:
+        conn.close()
+
+
 FILTER_KEYS = ("from", "to", "model", "member", "profile", "project", "session", "source", "status")
 
 
@@ -239,6 +252,27 @@ def api_profiles():
     finally:
         conn.close()
     return jsonify({"ok": True, "profiles": [profile_summary(row) for row in rows]})
+
+@app.route("/api/plan", methods=["GET", "POST"])
+def api_plan():
+    conn = get_conn(str(DB_PATH))
+    try:
+        if request.method == "POST":
+            data = request.get_json(silent=True) or {}
+            plan = (data.get("plan") or "").strip()
+            if not plan:
+                return json_error("plan is required", 400)
+            set_plan(
+                conn,
+                plan,
+                effective_from=data.get("effective_from"),
+                note=data.get("note"),
+            )
+        current = current_plan(conn)
+        history = [dict(row) for row in plan_history(conn)]
+    finally:
+        conn.close()
+    return jsonify({"ok": True, "current": current, "history": history})
 
 @app.route("/api/filters/options")
 def api_filter_options():
@@ -447,6 +481,43 @@ def api_analytics():
         return json_error(f"Analytics failed: {e}", 500)
     return jsonify({"ok": True, "filters": filters, "days": days, **result})
 
+@app.route("/api/forecast")
+def api_forecast():
+    plan = request.args.get("plan") or "go"
+    try:
+        period_day = int(request.args.get("period_start_day") or PERIOD_START_DAY)
+    except (TypeError, ValueError):
+        period_day = PERIOD_START_DAY
+    period_day = max(1, min(31, period_day))
+    filters = _request_filters()
+    try:
+        conn = get_conn(str(DB_PATH))
+        try:
+            result = forecast(conn, plan, period_start_day=period_day, filters=filters)
+        finally:
+            conn.close()
+    except Exception as e:
+        return json_error(f"Forecast failed: {e}", 500)
+    return jsonify({"ok": True, "plan": plan, "filters": filters, **result})
+
+@app.route("/api/plan-sim")
+def api_plan_sim():
+    try:
+        period_day = int(request.args.get("period_start_day") or PERIOD_START_DAY)
+    except (TypeError, ValueError):
+        period_day = PERIOD_START_DAY
+    period_day = max(1, min(31, period_day))
+    filters = _request_filters()
+    try:
+        conn = get_conn(str(DB_PATH))
+        try:
+            result = simulate_plans(conn, filters=filters, period_start_day=period_day)
+        finally:
+            conn.close()
+    except Exception as e:
+        return json_error(f"Plan simulation failed: {e}", 500)
+    return jsonify({"ok": True, "filters": filters, **result})
+
 @app.route("/api/import-sessions", methods=["POST"])
 def api_import_sessions():
     """Import usage metadata from the auto-detected OpenCode session DB."""
@@ -524,10 +595,14 @@ def api_report():
         return json_error(f"DB read failed: {e}", 500)
 
     # Backwards-compatible map for older clients, now scoped to the current
-    # billing period instead of the lifetime of the database.
+    # billing period instead of the lifetime of the database. A model used
+    # under two plans gets a `model@plan` key to avoid collisions.
+    from collections import Counter
+    counts = Counter(w["model"] for w in windows)
     go_pct = {}
     for w in windows:
-        go_pct[w["model"]] = {
+        key = w["model"] if counts[w["model"]] == 1 else f"{w['model']}@{w['plan']}"
+        go_pct[key] = {
             "limit": w["limit"],
             "pct": w["month_pct"],
             "allowance": w["month_used"],
@@ -635,7 +710,7 @@ def api_log():
     if not api_key or not api_key.startswith("oc_sk_"):
         return json_error("Missing or invalid OPENCODE_API_KEY. Create one at Console: Account > Personal API keys or Settings > Service accounts (needs Models: Request). Key looks like oc_sk_...", 401)
 
-    plan = data.get("plan") or (profile or {}).get("plan") or os.getenv("OPENCODE_PLAN")
+    plan = data.get("plan") or (profile or {}).get("plan") or os.getenv("OPENCODE_PLAN") or _current_plan()
     member = data.get("member") or (profile or {}).get("member") or os.getenv("OPENCODE_MEMBER")
     project = data.get("project") or (profile or {}).get("project") or os.getenv("OPENCODE_PROJECT")
 

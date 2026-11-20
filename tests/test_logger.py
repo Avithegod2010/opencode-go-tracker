@@ -1,6 +1,6 @@
 import pytest
 
-from opencode_tracker.db import get_conn
+from opencode_tracker.db import get_conn, set_plan
 from opencode_tracker.logger import OpencodeLogger
 
 
@@ -183,6 +183,27 @@ def test_classify_error():
     assert classify_error(None, "HTTP 402: Insufficient account funds")[0] == "402_insufficient_funds"
     assert classify_error(503, "")[0] == "5xx_upstream"
     assert classify_error(418, "")[0] == "error"
+
+
+def test_logger_uses_current_plan(tmp_path, monkeypatch):
+    import opencode_tracker.logger as logger_module
+
+    db = tmp_path / "plan.db"
+    conn = get_conn(db)
+    set_plan(conn, "go_plus", effective_from="2026-11-01T00:00:00+00:00")
+    conn.close()
+    monkeypatch.setattr(
+        logger_module.requests,
+        "post",
+        lambda *a, **kw: FakeResponse(OK_PAYLOAD),
+    )
+    logger = OpencodeLogger(db_path=db, csv_path=None, api_key="test-key-not-real", retries=0)
+    logger.chat_completions("kimi-k3", [{"role": "user", "content": "hi"}])
+
+    check = get_conn(db)
+    row = check.execute("SELECT plan FROM requests ORDER BY id DESC LIMIT 1").fetchone()
+    assert row["plan"] == "go_plus"
+    check.close()
 
 
 def test_existing_csv_header_is_preserved(tmp_path):
