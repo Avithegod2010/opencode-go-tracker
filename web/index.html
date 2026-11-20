@@ -199,6 +199,8 @@ pre{white-space:pre-wrap;word-break:break-word;background:#070c16;border:1px sol
       <p class="desc">Reads <span class="mono" id="reportDbPath">opencode_usage.db</span> / <span class="mono">usage_log.csv</span>. Shows per-model+billing totals, daily spark, recent 10, and Go % vs monthly limit (Go / Go Plus / Go Teams). CLI: <span class="mono">python tracker.py report --db opencode_usage.db --plan go</span></p>
       <div class="controls">
         <button id="reportRefresh" class="btn primary">Refresh</button>
+        <button id="importSessionsBtn" class="btn ghost">Import OpenCode sessions</button>
+        <span id="importSessionsStatus" class="small"></span>
         <label>Plan <select id="reportPlan"><option value="">(no %)</option><option value="go">Go</option><option value="go_plus">Go Plus</option><option value="go_teams">Go Teams</option></select></label>
         <label>Period start day <input type="number" id="reportPeriodDay" min="1" max="31" value="1" style="width:64px;background:#0b1220;border:1px solid #263554;color:var(--text);border-radius:8px;padding:8px 10px;font-size:13px"/></label>
         <span id="reportTotals" class="badge"></span>
@@ -561,6 +563,22 @@ async function loadReport(){
 $('#reportRefresh').addEventListener('click',loadReport);
 $('#reportPlan').addEventListener('change',loadReport);
 $('#reportPeriodDay').addEventListener('change',loadReport);
+$('#importSessionsBtn').addEventListener('click', async()=>{
+  const btn=$('#importSessionsBtn');
+  btn.disabled=true; btn.textContent='Importing…';
+  $('#importSessionsStatus').textContent='';
+  try{
+    const res=await fetch('/api/import-sessions', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({})});
+    const j=await res.json();
+    if(!res.ok || !j.ok) throw new Error(j.error||'import failed');
+    $('#importSessionsStatus').innerHTML=`<span class="badge ok">imported</span> ${esc(j.sessions_imported)} sessions · ${esc(j.messages_imported)} messages · ${esc(j.duplicates_skipped)} dupes`;
+    loadReport();
+  }catch(e){
+    $('#importSessionsStatus').innerHTML=`<span class="badge warn">failed</span> ${esc(e.message)}`;
+  }finally{
+    btn.disabled=false; btn.textContent='Import OpenCode sessions';
+  }
+});
 </script>
 </body>
 </html>

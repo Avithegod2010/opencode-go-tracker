@@ -56,6 +56,7 @@ from opencode_tracker.go_limits import (
     load_cached_limits,
     sync_limits,
 )
+from opencode_tracker.importer import find_opencode_db, import_sessions
 from opencode_tracker.preflight import check_key
 from opencode_tracker.profiles import profile_summary, resolve_profile
 from opencode_tracker.windows import compute_windows, period_start, week_start
@@ -385,6 +386,40 @@ def api_merge():
         "detailed_csv": detailed_csv_str,
         "detected_cols": result["detected_cols"],
     })
+
+@app.route("/api/import-sessions", methods=["POST"])
+def api_import_sessions():
+    """Import usage metadata from the auto-detected OpenCode session DB."""
+    data = request.get_json(silent=True) or {}
+    source = find_opencode_db()
+    if source is None:
+        return json_error(
+            "OpenCode session database not found. Set OPENCODE_CLIENT_DB or use the CLI with --opencode-db.",
+            404,
+        )
+    try:
+        limit = int(data["limit"]) if data.get("limit") else None
+    except (TypeError, ValueError):
+        return json_error("limit must be an integer", 400)
+
+    try:
+        conn = get_conn(str(DB_PATH))
+        stats = import_sessions(
+            conn,
+            source_db=source,
+            since=data.get("since"),
+            limit_sessions=limit,
+            dry_run=bool(data.get("dry_run")),
+            full_paths=bool(data.get("full_paths")),
+            include_titles=not bool(data.get("no_titles")),
+            profile=data.get("profile"),
+            member=data.get("member"),
+            plan=data.get("plan"),
+        )
+        conn.close()
+    except Exception as e:
+        return json_error(f"Session import failed: {e}", 500)
+    return jsonify({"ok": True, **stats})
 
 @app.route("/api/report", methods=["GET"])
 def api_report():

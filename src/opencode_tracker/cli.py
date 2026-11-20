@@ -52,6 +52,7 @@ from .db import (
     update_profile_check,
 )
 from .go_limits import monthly_limit, sync_limits
+from .importer import find_opencode_db, import_sessions
 from .logger import OpencodeLogger, load_dotenv
 from .preflight import check_key
 from .profiles import resolve_profile
@@ -165,6 +166,44 @@ def cmd_report(args):
     # Also show CSV if exists
     if args.csv and Path(args.csv).exists():
         print(f"\nCSV log at {args.csv} ({Path(args.csv).stat().st_size} bytes)")
+
+
+def cmd_import_sessions(args):
+    load_dotenv()
+    source = find_opencode_db(args.opencode_db)
+    if source is None:
+        print("OpenCode session database not found.")
+        print("Pass --opencode-db PATH or set OPENCODE_CLIENT_DB.")
+        sys.exit(1)
+    conn = get_conn(args.db)
+    try:
+        stats = import_sessions(
+            conn,
+            source_db=source,
+            since=args.since,
+            limit_sessions=args.limit,
+            dry_run=args.dry_run,
+            full_paths=args.full_paths,
+            include_titles=not args.no_titles,
+            profile=args.profile,
+            member=args.member,
+            plan=args.plan,
+        )
+    except Exception as e:
+        print(f"Import failed: {e}")
+        sys.exit(1)
+    finally:
+        conn.close()
+
+    print(f"Source: {stats['source_db']}")
+    print(f"Sessions: {stats['sessions_imported']} imported of {stats['sessions_seen']} seen")
+    print(f"Messages: {stats['messages_imported']} imported, {stats['duplicates_skipped']} duplicates skipped")
+    print(f"Session adjustments: {stats['adjustment_rows']}")
+    print(f"Source totals: cost ${stats['total_cost']:.4f} | tokens {stats['total_tokens']}")
+    if stats["dry_run"]:
+        print("Dry run: nothing written.")
+    else:
+        print(f"Wrote to {args.db}")
 
 
 def cmd_profile(args):
@@ -501,6 +540,19 @@ def build_parser():
     pi = sub.add_parser("init-db", help="Create SQLite DB")
     pi.add_argument("--db", default="opencode_usage.db", help="SQLite DB path")
 
+    # import-sessions
+    pim = sub.add_parser("import-sessions", help="Import usage metadata from OpenCode's local session DB")
+    pim.add_argument("--opencode-db", help="Path to OpenCode's opencode.db (auto-detected if omitted)")
+    pim.add_argument("--db", default="opencode_usage.db", help="Tracker SQLite DB")
+    pim.add_argument("--since", help="Only sessions updated on/after this date/ISO timestamp")
+    pim.add_argument("--limit", type=int, help="Import at most N recent sessions")
+    pim.add_argument("--dry-run", action="store_true", help="Count without writing")
+    pim.add_argument("--full-paths", action="store_true", help="Store full project paths instead of folder names")
+    pim.add_argument("--no-titles", action="store_true", help="Do not store session titles")
+    pim.add_argument("--profile", help="Profile label for imported rows")
+    pim.add_argument("--member", help="Member label for imported rows")
+    pim.add_argument("--plan", choices=["go", "go_plus", "go-plus", "go_teams", "go-teams"], help="Plan label for imported rows")
+
     # sync-limits
     ps = sub.add_parser("sync-limits", help="Fetch Go monthly limits from the model list API")
     ps.add_argument("--api-key", help="Override OPENCODE_API_KEY")
@@ -561,6 +613,8 @@ def main():
         cmd_report(args)
     elif args.cmd == "init-db":
         cmd_init_db(args)
+    elif args.cmd == "import-sessions":
+        cmd_import_sessions(args)
     elif args.cmd == "sync-limits":
         cmd_sync_limits(args)
     elif args.cmd == "key-check":

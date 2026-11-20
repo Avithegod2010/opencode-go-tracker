@@ -339,6 +339,41 @@ def test_sync_limits_endpoint(app_module, client, monkeypatch):
     assert body["limits"]["kimi-k3"]["go"] == 15
 
 
+def test_import_sessions_endpoint(app_module, client, monkeypatch, tmp_path):
+    source = tmp_path / "opencode.db"
+    source.write_bytes(b"")
+    monkeypatch.setattr(app_module, "find_opencode_db", lambda: source)
+    monkeypatch.setattr(
+        app_module,
+        "import_sessions",
+        lambda conn, **kwargs: {
+            "source_db": str(source),
+            "sessions_seen": 10,
+            "sessions_selected": 10,
+            "sessions_imported": 10,
+            "messages_seen": 50,
+            "messages_imported": 48,
+            "duplicates_skipped": 2,
+            "adjustment_rows": 1,
+            "total_cost": 1.25,
+            "total_tokens": 1000,
+            "dry_run": False,
+        },
+    )
+    res = client.post("/api/import-sessions", json={})
+    body = res.get_json()
+    assert res.status_code == 200
+    assert body["ok"] is True
+    assert body["sessions_imported"] == 10
+    assert body["messages_imported"] == 48
+
+
+def test_import_sessions_missing_source(app_module, client, monkeypatch):
+    monkeypatch.setattr(app_module, "find_opencode_db", lambda: None)
+    res = client.post("/api/import-sessions", json={})
+    assert res.status_code == 404
+
+
 # --- security hardening -------------------------------------------------
 
 def test_rejects_cross_site_origin(client):
