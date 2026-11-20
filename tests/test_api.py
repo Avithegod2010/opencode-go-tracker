@@ -423,6 +423,44 @@ def test_import_sessions_missing_source(app_module, client, monkeypatch):
     assert res.status_code == 404
 
 
+def test_analytics_endpoint(app_module, client):
+    conn = get_conn(str(app_module.DB_PATH))
+    now = datetime.now(timezone.utc)
+    insert_request(conn, {
+        "timestamp": now.isoformat(),
+        "model": "kimi-k3",
+        "billing_source": "go",
+        "allowance": 1.5,
+        "cache_read": 100,
+        "input_tokens": 100,
+        "profile": "work",
+        "source": "proxy",
+        "status": "ok",
+    })
+    insert_request(conn, {
+        "timestamp": (now - timedelta(days=1)).isoformat(),
+        "model": "glm-5.3",
+        "billing_source": "balance",
+        "cost": 0.25,
+        "profile": "personal",
+        "source": "import",
+        "status": "ok",
+    })
+    conn.close()
+
+    body = client.get("/api/analytics?days=7").get_json()
+    assert body["ok"] is True
+    assert body["kpi"]["requests"] == 2
+    assert body["kpi"]["cost"] == pytest.approx(0.25)
+    assert len(body["days"]) == 7
+    assert body["series"]
+
+    filtered = client.get("/api/analytics?days=7&profile=work").get_json()
+    assert filtered["kpi"]["requests"] == 1
+    assert filtered["kpi"]["cost"] == 0
+    assert [row["model"] for row in filtered["by_model"]] == ["kimi-k3"]
+
+
 # --- security hardening -------------------------------------------------
 
 def test_rejects_cross_site_origin(client):

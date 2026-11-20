@@ -27,6 +27,15 @@ header{position:sticky;top:0;z-index:10;background:rgba(11,15,20,.92);backdrop-f
 .card p.desc{margin:0 0 14px;color:var(--muted);font-size:13px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 @media(max-width:900px){.grid2{grid-template-columns:1fr}}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+@media(max-width:900px){.grid3{grid-template-columns:1fr 1fr}}
+@media(max-width:620px){.grid3{grid-template-columns:1fr}}
+.kpi{background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:12px}
+.kpi .label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+.kpi .value{font-size:20px;font-weight:700;margin-top:2px}
+.kpi .sub{font-size:11px;color:var(--muted);margin-top:2px}
+.bar-track{height:8px;background:#0b1220;border:1px solid var(--border);border-radius:999px;overflow:hidden;margin-top:3px}
+.bar-fill{height:100%;background:var(--accent);border-radius:999px}
 .drop{border:2px dashed #2a3a56;border-radius:12px;padding:22px;text-align:center;background:var(--panel2);cursor:pointer;transition:.15s}
 .drop.dragover{border-color:var(--accent);background:#0f1f36}
 .drop input{display:none}
@@ -81,6 +90,7 @@ pre{white-space:pre-wrap;word-break:break-word;background:#070c16;border:1px sol
   <button class="tab-btn active" data-tab="merge">A. CSV Merger</button>
   <button class="tab-btn" data-tab="logger">B. Logger</button>
   <button class="tab-btn" data-tab="report">Report</button>
+  <button class="tab-btn" data-tab="insights">Insights</button>
   <button class="tab-btn" data-tab="help">Help</button>
 </nav>
 
@@ -233,6 +243,37 @@ pre{white-space:pre-wrap;word-break:break-word;background:#070c16;border:1px sol
     </div>
   </section>
 
+  <!-- INSIGHTS TAB -->
+  <section id="tab-insights" class="tab-pane" style="display:none">
+    <div class="card">
+      <h2>Insights — cost, models, cache</h2>
+      <p class="desc">Last 30 days by default. Cost per day/model, model mix, cache-hit ratio, cost per request, and latency. Filters apply on top of the selected range.</p>
+      <div class="controls">
+        <label>From <input type="date" id="insightsFrom" style="width:150px"/></label>
+        <label>To <input type="date" id="insightsTo" style="width:150px"/></label>
+        <label>Range <select id="insightsDays" style="width:auto"><option value="7">7 days</option><option value="14">14 days</option><option value="30" selected>30 days</option><option value="90">90 days</option></select></label>
+        <button id="insightsRefresh" class="btn primary">Refresh</button>
+        <span id="insightsStatus" class="badge"></span>
+      </div>
+      <div id="insightsKpis" class="grid3"></div>
+      <h3 style="font-size:13px;margin:16px 0 6px">Cost by day and model</h3>
+      <div id="insightsChart" style="overflow:auto"></div>
+      <div id="insightsLegend" class="small" style="margin-top:6px"></div>
+      <div class="grid2" style="margin-top:16px">
+        <div>
+          <h3 style="font-size:13px">Model mix</h3>
+          <div id="insightsModels"></div>
+        </div>
+        <div>
+          <h3 style="font-size:13px">By source</h3>
+          <div id="insightsSources"></div>
+          <h3 style="font-size:13px;margin-top:12px">By project</h3>
+          <div id="insightsProjects"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- HELP TAB -->
   <section id="tab-help" class="tab-pane" style="display:none">
     <div class="card">
@@ -292,6 +333,7 @@ $$('.tab-btn').forEach(b=>{
     $$('.tab-pane').forEach(p=>p.style.display='none');
     $('#tab-'+b.dataset.tab).style.display='block';
     if(b.dataset.tab==='report') loadReport();
+    if(b.dataset.tab==='insights') loadInsights();
   });
 });
 
@@ -617,6 +659,82 @@ $('#importSessionsBtn').addEventListener('click', async()=>{
     btn.disabled=false; btn.textContent='Import OpenCode sessions';
   }
 });
+
+// --- Insights ---
+const INSIGHT_COLORS=['#3b82f6','#22c55e','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#ec4899','#84cc16','#94a3b8'];
+function renderStackedChart(container, days, series){
+  if(!days.length){ container.innerHTML='<span class="small">No data in this range.</span>'; return; }
+  const W=Math.max(640, days.length*32+80), H=280, padL=46, padB=30, padT=12;
+  const totals=days.map((_,i)=>series.reduce((s,ser)=>s+(ser.values[i]||0),0));
+  const max=Math.max(0.0001,...totals);
+  const plotW=W-padL-12, plotH=H-padT-padB;
+  const bw=plotW/Math.max(1,days.length);
+  let svg=`<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Stacked cost by day and model">`;
+  for(let g=0;g<=4;g++){
+    const y=padT+plotH*(g/4), val=max*(1-g/4);
+    svg+=`<line x1="${padL}" y1="${y}" x2="${W-12}" y2="${y}" stroke="#1f2e44" stroke-width="1"/>`;
+    svg+=`<text x="${padL-6}" y="${y+4}" fill="#9ab0c9" font-size="10" text-anchor="end">$${val.toFixed(2)}</text>`;
+  }
+  days.forEach((day,i)=>{
+    let y=padT+plotH;
+    series.forEach((s,si)=>{
+      const v=s.values[i]||0;
+      if(!v) return;
+      const h=(v/max)*plotH;
+      y-=h;
+      svg+=`<rect x="${padL+i*bw+1}" y="${y}" width="${Math.max(1,bw-2)}" height="${Math.max(0,h)}" fill="${INSIGHT_COLORS[si%INSIGHT_COLORS.length]}" rx="1"><title>${esc(day)} · ${esc(s.model)} · $${v.toFixed(4)}</title></rect>`;
+    });
+  });
+  const step=Math.max(1,Math.ceil(days.length/10));
+  days.forEach((day,i)=>{
+    if(i%step) return;
+    svg+=`<text x="${padL+i*bw+bw/2}" y="${H-10}" fill="#9ab0c9" font-size="9" text-anchor="middle">${esc(day.slice(5))}</text>`;
+  });
+  svg+='</svg>';
+  container.innerHTML=svg;
+}
+function insightBars(el, rows, valueKey){
+  if(!rows.length){ el.innerHTML='<span class="small">No data.</span>'; return; }
+  const max=Math.max(...rows.map(r=>r[valueKey]||0),0.0001);
+  el.innerHTML='<div style="display:grid;gap:6px">'+rows.slice(0,8).map((r,i)=>{
+    const v=r[valueKey]||0, w=(v/max*100).toFixed(1);
+    return `<div><div class="flex" style="justify-content:space-between"><span class="mono small">${esc(r.name)}</span><span class="small mono">$${v.toFixed(4)} · ${esc(r.n)} req</span></div><div class="bar-track"><div class="bar-fill" style="width:${w}%;background:${INSIGHT_COLORS[i%INSIGHT_COLORS.length]}"></div></div></div>`;
+  }).join('')+'</div>';
+}
+async function loadInsights(){
+  const status=$('#insightsStatus');
+  status.textContent='loading…';
+  const params=new URLSearchParams({days:$('#insightsDays').value||'30'});
+  const from=$('#insightsFrom').value; if(from) params.set('from',from);
+  const to=$('#insightsTo').value; if(to) params.set('to',to);
+  try{
+    const res=await fetch('/api/analytics?'+params.toString());
+    const j=await res.json();
+    if(!res.ok || !j.ok) throw new Error(j.error||'analytics failed');
+    const k=j.kpi||{};
+    const pct=v=>v==null?'—':(v*100).toFixed(1)+'%';
+    const money=v=>'$'+(v||0).toFixed(4);
+    $('#insightsKpis').innerHTML=[
+      ['Cost',money(k.cost),`billable ${money(k.billable)}`],
+      ['Requests',String(k.requests??0),`${k.tokens??0} tokens`],
+      ['Cache hit',pct(k.cache_hit_ratio),`${k.cache_read??0} cache-read`],
+      ['Cost / request',k.cost_per_request==null?'—':money(k.cost_per_request),'billable / request'],
+      ['Avg latency',k.avg_latency_ms==null?'—':`${k.avg_latency_ms} ms`,'proxy requests'],
+      ['Allowance',money(k.allowance),'Go plan consumption'],
+    ].map(([label,value,sub])=>`<div class="kpi"><div class="label">${esc(label)}</div><div class="value">${esc(value)}</div><div class="sub">${esc(sub)}</div></div>`).join('');
+    renderStackedChart($('#insightsChart'), j.days||[], j.series||[]);
+    $('#insightsLegend').innerHTML=(j.series||[]).map((s,i)=>`<span class="badge" style="border-color:${INSIGHT_COLORS[i%INSIGHT_COLORS.length]};color:${INSIGHT_COLORS[i%INSIGHT_COLORS.length]}">${esc(s.model)}</span>`).join(' ');
+    insightBars($('#insightsModels'), (j.by_model||[]).map(r=>({name:r.model,cost:r.cost,n:r.n})), 'cost');
+    insightBars($('#insightsSources'), j.by_source||[], 'cost');
+    insightBars($('#insightsProjects'), j.by_project||[], 'cost');
+    status.textContent=`${(j.by_model||[]).length} models · ${j.days.length} days`;
+    status.className='badge ok';
+  }catch(e){
+    status.textContent=e.message; status.className='badge warn';
+  }
+}
+$('#insightsRefresh').addEventListener('click',loadInsights);
+$('#insightsDays').addEventListener('change',loadInsights);
 </script>
 </body>
 </html>

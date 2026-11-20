@@ -49,6 +49,7 @@ from flask import Flask, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 
 from opencode_tracker.csv_merger import merge_csvs
+from opencode_tracker.analytics import analytics
 from opencode_tracker.logger import OpencodeLogger, classify_error, parse_usage
 from opencode_tracker.db import (
     build_where,
@@ -427,6 +428,24 @@ def api_merge():
         "detailed_csv": detailed_csv_str,
         "detected_cols": result["detected_cols"],
     })
+
+@app.route("/api/analytics")
+def api_analytics():
+    try:
+        days = int(request.args.get("days") or 30)
+    except (TypeError, ValueError):
+        days = 30
+    days = max(1, min(120, days))
+    filters = _request_filters()
+    try:
+        conn = get_conn(str(DB_PATH))
+        try:
+            result = analytics(conn, filters=filters, days=days)
+        finally:
+            conn.close()
+    except Exception as e:
+        return json_error(f"Analytics failed: {e}", 500)
+    return jsonify({"ok": True, "filters": filters, "days": days, **result})
 
 @app.route("/api/import-sessions", methods=["POST"])
 def api_import_sessions():
