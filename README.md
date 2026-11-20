@@ -2,8 +2,8 @@
 
 Local tracker for **OpenCode Go / Console**. Three ways to use it, one shared library:
 
-- **CLI** (`tracker.py` / `opencode-tracker`) — CSV merge, per-request logger, reports, limit sync.
-- **Web dashboard** (`app.py` + `web/index.html`) — drag-drop merger, live logger, report with computed 5h/week/month windows.
+- **CLI** (`tracker.py` / `opencode-tracker`) — CSV merge, logger, proxy, session import, reports, forecasts, plans, anomalies, attribution, scheduled reports.
+- **Web dashboard** (`app.py` + `web/index.html`) — drag-drop merger, live logger, report filters, live windows, and an **Insights** tab with charts, forecast, plan comparison, anomalies, and attribution.
 - **Standalone page** (`Go-Tracker.html`) — no server, no install: open the file and drop CSVs.
 
 No data leaves your device except the Inference API calls you make and the public model-list request used by `sync-limits`.
@@ -13,9 +13,10 @@ No data leaves your device except the Inference API calls you make and the publi
 | Console area | What it shows | This tracker |
 |---|---|---|
 | **Activity → Usage** | Cost by day, model, person; **Export usage** CSV for 7/30/90 days | **CSV merger** consumes those exports |
-| **Inference API → Cost** | Every response returns `usage.cost`, `opencode.billing_source`, `list_cost`, `allowance`, `tokens{...}` | **Logger** parses and stores every field |
+| **Inference API → Cost** | Every response returns `usage.cost`, `opencode.billing_source`, `list_cost`, `allowance`, `tokens{...}` | **Logger** parses and stores every field; **proxy** captures real traffic |
 | **Go** | Per-model monthly limits; 5h = 20%, weekly = 50%, monthly = 100% | **Windows report** computes live 5h/week/month usage |
 | **Go model list API** | `GET /inference/go/v1/models` with `go.monthly_usage` | **`sync-limits`** refreshes the local limit table |
+| **OpenCode sessions** | Local `opencode.db` holds session cost/tokens | **`import-sessions`** imports metadata for attribution |
 | **Budgets → What counts** | Paid & Go extra usage count; free & Go-within-plan don't | Merger's `--billable-only`, logger's `billing_source` |
 
 Go window semantics come from <https://opencode.ai/docs/go#usage-limits>:
@@ -49,13 +50,20 @@ copy .env.example .env
 python app.py                 # http://localhost:8000
 # or
 opencode-tracker web --port 8000
+
+# Or run everything: proxy + dashboard + periodic limit sync
+opencode-tracker daemon --plan go --period-start-day 1 --report-every 24
+#   proxy:      http://127.0.0.1:8787
+#   dashboard:  http://127.0.0.1:8000
+#   reports:    ./reports/
 ```
 
 ### Dashboard tabs
 
 - **A. CSV Merger** — drop `usage_7d.csv` + `usage_30d.csv` (+ `90d`), pick a plan, toggle billable-only/dedupe, **Merge** → per-model table plus **totals.csv** and **detailed.csv** downloads.
-- **B. Logger** — paste an `oc_sk_...` key, choose Base URL, model and API family, send a message → shows `billing_source`, `cost`, `allowance`, tokens, and writes SQLite + CSV.
-- **Report** — per-model/billing totals, current-period totals, daily trend, recent requests, and the live **5h / week / month** window table. Set the **period start day** to your subscription anniversary.
+- **B. Logger** — paste an `oc_sk_...` key or choose a profile, choose Base URL, model and API family, send a message → shows `billing_source`, `cost`, `allowance`, tokens, and writes SQLite + CSV. **Check key** verifies it against `/v1/models`.
+- **Report** — filtered per-model/billing totals, current-period totals, daily trend, recent requests, plan history, session import, and the live **5h / week / month** window table. Set the **period start day** to your subscription anniversary.
+- **Insights** — cost/request/cache KPIs, stacked cost chart, model mix, burn-rate forecast, Go/Plus/Teams comparison, anomalies, and attribution by project/session/member/profile/model.
 - **Help** — docs links and billing/Go/budget notes.
 
 Keys typed in the browser persist in `localStorage` only on your device. Prefer `.env` for CLI use.
@@ -63,6 +71,85 @@ Keys typed in the browser persist in `localStorage` only on your device. Prefer 
 ### Standalone page
 
 Open `Go-Tracker.html` directly (double-click). Drop the same export CSVs; everything runs in the browser. The root `index.html` is a small landing page linking both surfaces.
+
+---
+
+## Live capture
+
+### Reverse proxy (recommended)
+
+`opencode-tracker proxy` is a local OpenAI-compatible reverse proxy. Point any client that supports a custom base URL at it; the proxy forwards to OpenCode, streams the response back, and records every inference request.
+
+```powershell
+opencode-tracker proxy --port 8787 --plan go --period-start-day 1
+# Go base URL for the client:
+#   http://127.0.0.1:8787/inference/go
+# Paid balance:
+#   http://127.0.0.1:8787/inference
+```
+
+- The client's `Authorization` header is forwarded; the proxy does not need or store a key.
+- SSE streams are relayed chunk by chunk and parsed for the final usage payload.
+- `x-opencode-session` is captured automatically; `x-opencode-project` (or `--project`) sets the project label.
+- Non-inference paths such as `/v1/models` are forwarded but not logged.
+- Binds `127.0.0.1` by default. Do not expose it to the internet.
+
+Quick check with curl:
+
+```powershell
+curl -X POST "http://127.0.0.1:8787/inference/go/openai/v1/chat/completions" `
+  -H "Authorization: Bearer oc_sk_..." -H "Content-Type: application/json" `
+  -d '{"model":"kimi-k3","messages":[{"role":"user","content":"hi"}]}'
+```
+
+### Import OpenCode sessions
+
+OpenCode keeps a local `opencode.db` with session cost/tokens. The importer reads **only metadata**: session id, project, title, model, cost, tokens, and timestamps. It never reads prompts, message content, accounts, or credentials.
+
+```powershell
+opencode-tracker import-sessions --dry-run
+opencode-tracker import-sessions --limit 5
+opencode-tracker import-sessions --since 2026-11-01 --no-titles
+```
+
+- Auto-detects `~/.local/share/opencode/opencode.db` (and the Windows AppData locations); override with `--opencode-db` or `OPENCODE_CLIENT_DB`.
+- Re-imports are idempotent (deduplicated by message id).
+- Per-message usage is reconciled against the session aggregate so totals match.
+- Session data has no `opencode.allowance`, so imported rows carry cost/tokens but not Go allowance. Use the proxy for live limit percentages.
+- The dashboard Report tab has an **Import OpenCode sessions** button.
+
+### Profiles and key checks
+
+Profiles keep base URL, plan, project, member, and the **name of an environment variable** — never the key:
+
+```powershell
+opencode-tracker profile add work --base-url https://opencode.ai/inference/go `
+  --plan go --key-env OPENCODE_KEY_WORK --project tracker --member alice
+opencode-tracker profile list
+opencode-tracker profile check work
+opencode-tracker log --profile work --model kimi-k3 --message "Hi"
+```
+
+Resolution order: explicit `--api-key` → the profile's `key_env` → `OPENCODE_PROFILE_<NAME>_KEY` → `OPENCODE_API_KEY`.
+
+```powershell
+opencode-tracker key-check              # validates the env key against /v1/models
+opencode-tracker key-check --profile work
+```
+
+`key-check` reports HTTP status, model count, Go model count, plans seen, and a redacted key prefix.
+
+### Watch and daemon
+
+```powershell
+opencode-tracker watch --plan go --interval 5   # live terminal window table
+opencode-tracker watch --once                    # print once and exit
+
+opencode-tracker daemon --plan go --period-start-day 1 `
+  --sync-interval 60 --import-interval 0 --report-every 24
+```
+
+`daemon` runs the proxy and dashboard together, refreshes limits on an interval, optionally imports sessions, and writes scheduled reports.
 
 ---
 
@@ -225,6 +312,75 @@ The web Report tab shows the same table and lets you change the period start day
 
 ---
 
+## Insights, forecasts, and planning
+
+All analytics honor the same filters: `--from`, `--to`, `--model`, `--member`, `--profile`, `--project`, `--session`, `--source`, `--status`.
+
+### Filters and report
+
+```powershell
+opencode-tracker report --plan go --from 2026-11-01 --to 2026-11-30 --profile work
+opencode-tracker report --plan go --project tracker --member alice
+```
+
+The Report tab exposes the same filters as date inputs and dropdowns (options come from the DB).
+
+### Burn-rate forecast
+
+```powershell
+opencode-tracker forecast --plan go --period-start-day 1
+```
+
+Projects the current period from elapsed burn, estimates days until each model limit, and flags `warm` / `risk` / `over`. Confidence is low before a full day of data. The Insights tab shows the same table.
+
+### Plan comparison
+
+```powershell
+opencode-tracker plan-sim --period-start-day 1
+```
+
+Compares current allowance usage against Go / Go Plus / Go Teams per-model limits: models over, allowance overage, coverage, and whether the plan fits. It is allowance-based coverage, not a token-price quote.
+
+### Plan history
+
+```powershell
+opencode-tracker plan set go --from 2026-10-01
+opencode-tracker plan set go_plus --from 2026-11-15 --note "upgrade"
+opencode-tracker plan list
+opencode-tracker plan current
+```
+
+Each logged/proxied request stores the active plan, and windows group by `(model, plan)`, so old percentages stay correct after an upgrade. The Report tab has a **Save plan** button.
+
+### Anomalies
+
+```powershell
+opencode-tracker anomalies --days 30 --baseline-days 14 --threshold 2
+```
+
+Flags days whose cost or allowance exceeds `mean + threshold × stddev` over the prior baseline, and names the top models for that day.
+
+### Attribution
+
+```powershell
+opencode-tracker attribution --by project
+opencode-tracker attribution --by session --profile work
+```
+
+Groups cost and allowance by project, session (with session title), member, profile, or model, including share percentages.
+
+### Scheduled reports
+
+```powershell
+opencode-tracker export-report --out reports/daily.html --format html --plan go
+opencode-tracker export-report --out reports/daily.json --format json
+opencode-tracker daemon --report-every 24 --report-dir reports --report-format html
+```
+
+The standalone report bundles KPIs, daily/model tables, forecast, plan comparison, project attribution, and anomalies. It uses inline CSS, no external assets, and escapes all data.
+
+---
+
 ## Limit sync (`sync-limits`)
 
 The live Go model list is documented at <https://opencode.ai/v2/docs/console/api/models>:
@@ -245,23 +401,58 @@ opencode-tracker sync-limits
 
 ---
 
+## Command reference
+
+| Command | Purpose |
+|---|---|
+| `csv-merge` | Merge Console export CSVs into per-model totals |
+| `log` | One manual inference call → DB/CSV |
+| `proxy` | Local reverse proxy that logs every inference request |
+| `import-sessions` | Import cost/tokens/session metadata from OpenCode |
+| `watch` | Live terminal 5h/week/month view |
+| `daemon` | Proxy + dashboard + periodic sync/import/report |
+| `report` | Filtered totals, daily, recent, and Go windows |
+| `forecast` | Projected period usage and days-to-limit |
+| `plan-sim` | Compare Go / Plus / Teams coverage |
+| `plan set/list/current` | Track the active plan over time |
+| `anomalies` | Flag unusual daily cost/allowance |
+| `attribution` | Cost by project/session/member/profile/model |
+| `export-report` | Standalone HTML/JSON report |
+| `profile add/list/remove/check` | Env-only key profiles |
+| `key-check` | Validate a key against `/v1/models` |
+| `sync-limits` | Refresh the Go limit cache |
+| `web` | Launch the dashboard (from a checkout) |
+| `init-db` | Create the SQLite DB |
+
 ## Project layout
 
 ```
 .
 ├── app.py                      # Flask server (serves web/ + /api/*)
-├── web/index.html              # Dashboard (Merger, Logger, Report, Help)
+├── web/index.html              # Dashboard (Merger, Logger, Report, Insights, Help)
 ├── index.html                  # Landing page linking the two UIs
 ├── Go-Tracker.html             # Standalone, no-backend analysis page
 ├── tracker.py                  # Thin CLI shim (kept for `python tracker.py ...`)
 ├── src/opencode_tracker/
 │   ├── cli.py                  # CLI implementation + `opencode-tracker` entry point
 │   ├── csv_merger.py           # A. merger
-│   ├── logger.py               # B. inference logger + parse_usage
-│   ├── db.py                   # SQLite schema/queries
+│   ├── logger.py               # B. inference logger + parse_usage + retries
+│   ├── proxy.py                # reverse proxy (JSON + SSE)
+│   ├── importer.py             # OpenCode session metadata import
+│   ├── profiles.py             # env-only key profiles
+│   ├── preflight.py            # key check against /v1/models
+│   ├── db.py                   # SQLite v2 schema, filters, plans, profiles
 │   ├── windows.py              # 5h / week / month computation
+│   ├── forecast.py             # burn-rate projection
+│   ├── simulator.py            # Go / Plus / Teams comparison
+│   ├── analytics.py            # KPIs and chart series
+│   ├── anomalies.py            # day-level anomaly detection
+│   ├── attribution.py          # project/session/member/profile/model totals
+│   ├── report_html.py          # standalone HTML/JSON reports
+│   ├── daemon.py               # proxy + dashboard + periodic tasks
+│   ├── watch.py                # live terminal window table
 │   └── go_limits.py            # limits table + sync cache
-├── tests/                      # pytest suite (42 tests)
+├── tests/                      # pytest suite (118 tests)
 ├── examples/                   # sample usage CSVs
 ├── .env.example
 ├── pyproject.toml
@@ -276,7 +467,7 @@ pip install -e ".[dev]"
 python -m pytest -q
 ```
 
-Coverage: CSV dedupe/totals/billable filtering, window math (5h anchoring, Monday reset, period anniversary, future rows), usage parsing for all four API families, logger persistence and error statuses, the HTTP API through Flask's test client, and the security guards (Host/Origin checks, base-URL allowlist, loopback-only server key, security headers).
+Coverage: CSV dedupe/totals/billable filtering, window math (5h anchoring, Monday reset, period anniversary, future rows, plan split), usage parsing for all four API families, logger retries/status/latency and current-plan capture, proxy JSON/SSE/error forwarding, session import (v1/v2, adjustment, dedupe, no content/credentials), profiles and key checks, filters, analytics, forecast, plan simulator/history, anomalies, attribution, HTML/JSON reports, and the HTTP/security surface.
 
 ---
 
@@ -284,9 +475,12 @@ Coverage: CSV dedupe/totals/billable filtering, window math (5h anchoring, Monda
 
 - **No CSVs matched** → quote the glob: `"exports/*.csv"` (Windows shell expansion differs).
 - **Missing model/cost column** → check the Console export header row; the merger prints detected columns.
-- **Go % looks too high** → the CSV's `allowance` may cover more than the current month, or your subscription renews mid-month. Use the live report with `--period-start-day`.
-- **Windows show 0** → allowance is only present on live Inference responses, not in daily CSV exports. Log a Go request first, or import a CSV only for cost totals.
+- **Go % looks too high or splits by plan** → windows group by the plan recorded on each request. Set the plan history (`plan set`) before logging; legacy rows use the selected plan.
+- **Windows show 0** → allowance is only present on live Inference responses. Run the proxy or log a Go request; session imports carry cost/tokens but not allowance.
 - **No allowance in CSV** → exports may only carry `cost`; the merger falls back to cost for the summary percentage.
+- **Proxy logs nothing** → confirm the client base URL is `http://127.0.0.1:8787/inference/go` (or `/inference`), and that the path contains a known inference endpoint. `/v1/models` is forwarded but intentionally not logged.
+- **`import-sessions` finds nothing** → pass `--opencode-db "C:\Users\...\.local\share\opencode\opencode.db"` or set `OPENCODE_CLIENT_DB`. The importer reads metadata only and does not need a key.
+- **`export-report` is empty** → reports use the same filters and plan; check `--from/--to` and that the DB has rows.
 - **`sync-limits` fails** → check network access to `https://opencode.ai/inference/go/v1/models`; clear `go_limits_cache.json` and retry.
 - **HTTP 401** → key invalid/expired/revoked.
 - **HTTP 402** → balance zero; add credits or enable Auto-recharge.
@@ -296,17 +490,18 @@ Coverage: CSV dedupe/totals/billable filtering, window math (5h anchoring, Monda
 
 ## Privacy
 
-`.env`, `*.db`, `*.csv`, `go_limits_cache.json`, and `.pytest_cache/` are local and gitignored. No telemetry. Requests go only to `https://opencode.ai` and the base URL you configure.
+`.env`, `*.db`, `*.csv`, `reports/`, `go_limits_cache.json`, and `.pytest_cache/` are local and gitignored. No telemetry. Requests go only to `https://opencode.ai` and the base URL you configure. Session imports read usage metadata from OpenCode's local DB; they do not read prompts, accounts, or credentials.
 
 ## Security
 
 See [SECURITY.md](SECURITY.md) for the full policy. Defaults are deliberately local:
 
-- Binds `127.0.0.1`; do not expose the dev server to the internet.
-- The server-side `OPENCODE_API_KEY` from `.env` is only used for **loopback** requests. LAN clients must send their own key.
+- Dashboard and proxy bind `127.0.0.1`; do not expose either to the internet.
+- The server-side `OPENCODE_API_KEY` and profile keys are only used for **loopback** requests. LAN clients must send their own key.
 - The web logger only forwards to `opencode.ai` (override hosts with `OPENCODE_ALLOWED_BASE_HOSTS`), blocking SSRF and key exfiltration.
 - `Host`/`Origin` validation blocks DNS rebinding and cross-site POSTs. Extra hostnames can be allowed with `OPENCODE_ALLOWED_HOSTS`.
-- CSV/API values are HTML-escaped in the dashboard and a strict Content-Security-Policy limits connections to the same origin.
+- Profiles store env variable names, not keys. Session import never reads `credential`, `account`, or message content.
+- CSV/API values are HTML-escaped in the dashboard and reports; a strict Content-Security-Policy limits connections to the same origin.
 - Browser-saved keys live in `localStorage` only when you tick “save key”.
 
 ## License
