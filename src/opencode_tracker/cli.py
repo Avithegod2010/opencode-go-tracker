@@ -56,6 +56,7 @@ from .importer import find_opencode_db, import_sessions
 from .logger import OpencodeLogger, load_dotenv
 from .preflight import check_key
 from .profiles import resolve_profile
+from .proxy import ProxyConfig, run_proxy
 from .windows import compute_windows, period_start, week_start
 
 
@@ -204,6 +205,34 @@ def cmd_import_sessions(args):
         print("Dry run: nothing written.")
     else:
         print(f"Wrote to {args.db}")
+
+
+def cmd_proxy(args):
+    load_dotenv()
+    profile = None
+    if args.profile:
+        conn = get_conn(args.db)
+        try:
+            profile = resolve_profile(conn, args.profile)
+        except KeyError as e:
+            print(str(e))
+            sys.exit(1)
+        finally:
+            conn.close()
+    plan = args.plan or (profile or {}).get("plan") or os.getenv("OPENCODE_PLAN")
+    project = args.project or (profile or {}).get("project") or os.getenv("OPENCODE_PROJECT")
+    member = args.member or (profile or {}).get("member") or os.getenv("OPENCODE_MEMBER")
+    config = ProxyConfig(
+        upstream=args.upstream,
+        db_path=Path(args.db),
+        csv_path=Path(args.csv),
+        profile=args.profile or os.getenv("OPENCODE_PROFILE"),
+        project=project,
+        member=member,
+        plan=plan,
+        max_capture_bytes=int(args.max_capture_mb * 1024 * 1024),
+    )
+    run_proxy(config, host=args.host, port=args.port)
 
 
 def cmd_profile(args):
@@ -540,6 +569,19 @@ def build_parser():
     pi = sub.add_parser("init-db", help="Create SQLite DB")
     pi.add_argument("--db", default="opencode_usage.db", help="SQLite DB path")
 
+    # proxy
+    pproxy = sub.add_parser("proxy", help="Run the local reverse proxy that logs every inference request")
+    pproxy.add_argument("--host", default="127.0.0.1", help="Bind host (default 127.0.0.1)")
+    pproxy.add_argument("--port", type=int, default=8787, help="Bind port (default 8787)")
+    pproxy.add_argument("--upstream", default="https://opencode.ai", help="Upstream origin (default https://opencode.ai)")
+    pproxy.add_argument("--db", default="opencode_usage.db", help="SQLite DB path")
+    pproxy.add_argument("--csv", default="usage_log.csv", help="CSV log path")
+    pproxy.add_argument("--profile", help="Profile label and defaults")
+    pproxy.add_argument("--project", help="Project label for proxied requests")
+    pproxy.add_argument("--member", help="Member label for proxied requests")
+    pproxy.add_argument("--plan", choices=["go", "go_plus", "go-plus", "go_teams", "go-teams"], help="Plan label")
+    pproxy.add_argument("--max-capture-mb", type=float, default=8, help="Max stream bytes kept for usage parsing")
+
     # import-sessions
     pim = sub.add_parser("import-sessions", help="Import usage metadata from OpenCode's local session DB")
     pim.add_argument("--opencode-db", help="Path to OpenCode's opencode.db (auto-detected if omitted)")
@@ -615,6 +657,8 @@ def main():
         cmd_init_db(args)
     elif args.cmd == "import-sessions":
         cmd_import_sessions(args)
+    elif args.cmd == "proxy":
+        cmd_proxy(args)
     elif args.cmd == "sync-limits":
         cmd_sync_limits(args)
     elif args.cmd == "key-check":

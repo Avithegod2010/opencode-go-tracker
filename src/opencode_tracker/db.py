@@ -11,11 +11,10 @@ The v1 schema is migrated in place; existing rows keep their data and get an
 """
 from __future__ import annotations
 
-import calendar
 import sqlite3
 from datetime import date, datetime, time, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 SCHEMA_VERSION = 2
 
@@ -262,8 +261,14 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
 def get_conn(db_path: Path | str) -> sqlite3.Connection:
     db_path = Path(db_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
-    conn.execute("PRAGMA journal_mode=WAL;")
+    conn = sqlite3.connect(str(db_path), timeout=15)
+    conn.execute("PRAGMA busy_timeout=10000;")
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+    except sqlite3.OperationalError:
+        # Another connection is switching/using the journal; WAL is already
+        # enabled for the database in that case.
+        pass
     conn.row_factory = sqlite3.Row
     _ensure_schema(conn)
     return conn
