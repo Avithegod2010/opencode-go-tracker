@@ -6,11 +6,6 @@
 
 <p><strong><a href="#quick-start">📊 Run the dashboard</a></strong> · <a href="#go-windows-5h--week--month">⏱️ How usage windows work</a> · <a href="#command-reference">⌨️ Commands</a></p>
 
-<picture>
-  <source media="(prefers-reduced-motion: reduce)" srcset="readme-hero.png" />
-  <img src="readme-hero.gif" width="820" alt="Three illustrated tiles labeled 5H, Week and Month" />
-</picture>
-
 </div>
 
 ## 📊 Sample usage report
@@ -18,6 +13,16 @@
 <p align="center">
   <a href="usage-sample.png"><img src="usage-sample.png" width="820" alt="Sample report with 5-hour, weekly and monthly usage for three models" /></a>
 </p>
+
+<details>
+<summary>Project illustration</summary>
+
+<picture>
+  <source media="(prefers-reduced-motion: reduce)" srcset="readme-hero.png" />
+  <img src="readme-hero.gif" width="820" alt="Three illustrated tiles labeled 5H, Week and Month" />
+</picture>
+
+</details>
 
 <p align="center"><sub>The tracker calculates these windows using synthetic requests.</sub></p>
 
