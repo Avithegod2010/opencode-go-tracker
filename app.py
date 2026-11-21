@@ -27,6 +27,7 @@ import json
 import shutil
 import tempfile
 import argparse
+import hmac
 import ipaddress
 from datetime import datetime, timezone
 from pathlib import Path
@@ -82,6 +83,8 @@ WEB_DIR = BASE_DIR / "web"
 DB_PATH = Path(os.getenv("OPENCODE_DB", BASE_DIR / "opencode_usage.db"))
 CSV_PATH = Path(os.getenv("OPENCODE_CSV", BASE_DIR / "usage_log.csv"))
 PERIOD_START_DAY = int(os.getenv("OPENCODE_PERIOD_START_DAY", "1") or 1)
+# Optional API shared secret; empty means the local-only behaviour is unchanged.
+API_TOKEN = os.getenv("TRACKER_API_TOKEN", "").strip()
 
 app = Flask(__name__, static_folder=str(WEB_DIR), static_url_path="")
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
@@ -208,6 +211,13 @@ def _validate_base_url(url: str) -> str:
 def _guard_local_api():
     if request.path.startswith("/api/") and not _same_origin_ok():
         return json_error("Blocked: untrusted Host/Origin for a local API request.", 403)
+    # Optional shared-secret gate. Loopback is not authentication: any other process
+    # or OS user on this machine can reach 127.0.0.1:8000. Set TRACKER_API_TOKEN to
+    # require it (X-Tracker-Token header, or ?token= for curl). Unset = unchanged.
+    if API_TOKEN and request.path.startswith("/api/") and request.path != "/api/health":
+        supplied = request.headers.get("X-Tracker-Token", "") or request.args.get("token", "")
+        if not hmac.compare_digest(supplied, API_TOKEN):
+            return json_error("Missing or invalid X-Tracker-Token.", 401)
     return None
 
 
