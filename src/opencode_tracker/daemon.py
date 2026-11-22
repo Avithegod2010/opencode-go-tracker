@@ -33,6 +33,9 @@ def load_web_app(db_path: Path, csv_path: Path, period_start_day: int):
     module.DB_PATH = Path(db_path)
     module.CSV_PATH = Path(csv_path)
     module.PERIOD_START_DAY = max(1, min(31, int(period_start_day)))
+    # Same startup posture as `python app.py`: the gate token exists before the
+    # first request, and the generated one is printed once here.
+    module.api_token()
     return module.app
 
 
