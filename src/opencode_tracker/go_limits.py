@@ -173,13 +173,6 @@ def monthly_limit(model: str, plan: str = "go") -> Optional[float]:
     return float(value) if value is not None else None
 
 
-def window_limits(model: str, plan: str = "go"):
-    m = monthly_limit(model, plan)
-    if m is None:
-        return (None, None, None)
-    return (m * 0.2, m * 0.5, m)
-
-
 PLAN_PRICES = {"go": 10, "go_plus": 40, "go_teams": 20}  # per month / per member
 
 

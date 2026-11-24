@@ -14,7 +14,6 @@ Docs:
 This module:
 - Provides parse_usage() that handles OpenAI Chat Completions, Responses, Anthropic Messages, Gemini.
 - Provides OpencodeLogger class that wraps HTTP calls and logs to SQLite + CSV.
-- CLI helper call_once() for single test request.
 
 Usage:
   from opencode_tracker.logger import OpencodeLogger
@@ -649,24 +648,3 @@ class OpencodeLogger:
             raw_json=res.json, http_status=res.status_code, latency_ms=res.latency_ms,
         )
         return res.json
-
-# CLI single-call helper
-def call_once(args):
-    import os
-    load_dotenv()
-    api_key = args.api_key or os.getenv("OPENCODE_API_KEY")
-    base_url = args.base_url or os.getenv("OPENCODE_BASE_URL") or "https://opencode.ai/inference"
-    logger = OpencodeLogger(db_path=args.db, csv_path=args.csv, api_key=api_key, base_url=base_url)
-    # Dispatch by API family
-    if args.api == "anthropic":
-        msgs = [{"role": "user", "content": args.message}]
-        return logger.anthropic_messages(model=args.model, messages=msgs, max_tokens=args.max_tokens or 1024)
-    elif args.api == "responses":
-        return logger.responses(model=args.model, input_text=args.message)
-    elif args.api == "gemini":
-        return logger.gemini_generate(model=args.model, contents=[{"parts":[{"text": args.message}]}])
-    else:  # openai chat
-        msgs = [{"role": "user", "content": args.message}]
-        if args.system:
-            msgs.insert(0, {"role": "system", "content": args.system})
-        return logger.chat_completions(model=args.model, messages=msgs, max_tokens=args.max_tokens, stream=args.stream)

@@ -168,12 +168,6 @@ def to_epoch(value: Any) -> Optional[float]:
     return dt.timestamp()
 
 
-def iso_from_epoch(epoch: Optional[float]) -> Optional[str]:
-    if epoch is None:
-        return None
-    return datetime.fromtimestamp(float(epoch), tz=timezone.utc).isoformat()
-
-
 def normalize_bound(value: Any, end: bool = False) -> Optional[str]:
     """Normalize a date/datetime filter bound to an ISO UTC string.
 
