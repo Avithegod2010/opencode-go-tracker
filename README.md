@@ -533,7 +533,8 @@ Coverage: CSV dedupe/totals/billable filtering, window math (5h anchoring, Monda
 See [SECURITY.md](SECURITY.md) for the full policy. Defaults are deliberately local:
 
 - Dashboard and proxy bind `127.0.0.1`; do not expose either to the internet.
-- The server-side `OPENCODE_API_KEY` and profile keys are only used for **loopback** requests. LAN clients must send their own key.
+- `/api/*` needs a token. It is generated on first start, saved 0600 under the user config dir, and printed once; the dashboard is served it automatically. Override with `TRACKER_API_TOKEN` for headless/CI use (`X-Tracker-Token:` header or `?token=`).
+- The server-side `OPENCODE_API_KEY` and profile keys are only used for **loopback** requests that already passed the token gate. LAN clients must send their own key.
 - The web logger only forwards to `opencode.ai` (override hosts with `OPENCODE_ALLOWED_BASE_HOSTS`), blocking SSRF and key exfiltration.
 - `Host`/`Origin` validation blocks DNS rebinding and cross-site POSTs. Extra hostnames can be allowed with `OPENCODE_ALLOWED_HOSTS`.
 - Profiles store env variable names, not keys. Session import never reads `credential`, `account`, or message content.

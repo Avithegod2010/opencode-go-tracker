@@ -23,10 +23,13 @@ import os
 import sys
 import io
 import csv
+import html as html_lib
 import json
+import secrets
 import shutil
 import tempfile
 import argparse
+import hmac
 import ipaddress
 from datetime import datetime, timezone
 from pathlib import Path
@@ -45,7 +48,7 @@ except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "Flask>=2.3"])
     import flask
 
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, Response, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 
 from opencode_tracker.csv_merger import merge_csvs
@@ -82,6 +85,12 @@ WEB_DIR = BASE_DIR / "web"
 DB_PATH = Path(os.getenv("OPENCODE_DB", BASE_DIR / "opencode_usage.db"))
 CSV_PATH = Path(os.getenv("OPENCODE_CSV", BASE_DIR / "usage_log.csv"))
 PERIOD_START_DAY = int(os.getenv("OPENCODE_PERIOD_START_DAY", "1") or 1)
+# Shared secret for /api/*. TRACKER_API_TOKEN is the headless/CI override; when
+# it is unset a token is generated on first use and persisted 0600 under the
+# user config dir, so the default deploy is never unprotected.
+API_TOKEN = os.getenv("TRACKER_API_TOKEN", "").strip()
+API_TOKEN_FILENAME = "api_token"
+_TOKEN_PRINTED = False
 
 app = Flask(__name__, static_folder=str(WEB_DIR), static_url_path="")
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
@@ -157,6 +166,72 @@ def _client_is_local() -> bool:
         return addr == "localhost"
 
 
+# --- API token -------------------------------------------------------------
+# Loopback is not an identity: every local process and OS user can reach
+# 127.0.0.1. /api/* is therefore gated by a token that is generated on first
+# use, not opt-in.
+def _config_dir() -> Path:
+    """Per-user config dir for the generated token (override for tests/CI)."""
+    override = os.getenv("OPENCODE_TRACKER_CONFIG_DIR")
+    if override:
+        return Path(override).expanduser()
+    if os.name == "nt":
+        base = os.getenv("APPDATA") or os.getenv("LOCALAPPDATA") or str(Path.home() / "AppData" / "Roaming")
+    else:
+        base = os.getenv("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "opencode-go-tracker"
+
+
+def _restrict_token_file(path: Path) -> None:
+    """Best effort 0600. Windows has no POSIX mode bits (NTFS ACLs inherit)."""
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def load_or_create_token(config_dir: Path | None = None) -> tuple[str, Path, bool]:
+    """Return (token, path, created) for the generated API token."""
+    directory = Path(config_dir) if config_dir else _config_dir()
+    path = directory / API_TOKEN_FILENAME
+    if path.is_file():
+        existing = path.read_text(encoding="utf-8").strip()
+        if existing:
+            _restrict_token_file(path)
+            return existing, path, False
+    token = secrets.token_urlsafe(32)  # 32 random bytes -> 43 URL-safe chars
+    directory.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, token.encode("ascii"))
+    finally:
+        os.close(fd)
+    _restrict_token_file(path)  # also narrows a pre-existing wider mode
+    return token, path, True
+
+
+def api_token() -> str:
+    """The token /api/* requires. Env override wins, else generated+persisted."""
+    global API_TOKEN, _TOKEN_PRINTED
+    if API_TOKEN:
+        return API_TOKEN
+    token, path, created = load_or_create_token()
+    API_TOKEN = token
+    if created and not _TOKEN_PRINTED:
+        _TOKEN_PRINTED = True
+        print(f"  API token (generated): {token}", flush=True)
+        print(
+            f"  Saved to {path} (0600). Every /api/* call needs X-Tracker-Token; "
+            "the dashboard gets it automatically. Set TRACKER_API_TOKEN to override.",
+            flush=True,
+        )
+    return token
+
+
+def _token_matches(supplied: str, expected: str) -> bool:
+    return hmac.compare_digest(supplied.encode("utf-8"), expected.encode("utf-8"))
+
+
 def _load_profile(name: Optional[str]) -> Optional[dict]:
     if not name:
         return None
@@ -208,6 +283,12 @@ def _validate_base_url(url: str) -> str:
 def _guard_local_api():
     if request.path.startswith("/api/") and not _same_origin_ok():
         return json_error("Blocked: untrusted Host/Origin for a local API request.", 403)
+    # Every /api/* route needs the token, including the ones that may use the
+    # server-side OPENCODE_API_KEY. /api/health stays open for probes/watchdogs.
+    if request.path.startswith("/api/") and request.path != "/api/health":
+        supplied = request.headers.get("X-Tracker-Token", "") or request.args.get("token", "")
+        if not _token_matches(supplied, api_token()):
+            return json_error("Missing or invalid X-Tracker-Token.", 401)
     return None
 
 
@@ -234,7 +315,21 @@ def json_error(msg, code=400):
 # --- Routes ---
 @app.route("/")
 def index():
-    return send_from_directory(str(WEB_DIR), "index.html")
+    # The dashboard calls /api/*, so it needs the token. Hand it to a same-origin
+    # render of our own page only: never to a foreign Host/Origin (DNS
+    # rebinding) and never to a non-loopback peer.
+    index_file = WEB_DIR / "index.html"
+    if not index_file.is_file():
+        return send_from_directory(str(WEB_DIR), "index.html")
+    page = index_file.read_text(encoding="utf-8")
+    if _same_origin_ok() and _client_is_local():
+        token = html_lib.escape(api_token(), quote=True)
+        page = page.replace(
+            "<head>",
+            f'<head>\n<meta name="tracker-api-token" content="{token}"/>',
+            1,
+        )
+    return Response(page, mimetype="text/html")
 
 @app.route("/api/health")
 def health():
@@ -868,6 +963,14 @@ def main():
     print(f"  DB:   {DB_PATH} {'(exists)' if DB_PATH.exists() else '(will be created on first log)'}")
     print(f"  CSV:  {CSV_PATH}")
     print(f"  Web:  http://{args.host}:{args.port}")
+    # Generate (or load) the token before serving, so it is printed once here
+    # instead of in the middle of a request log.
+    if API_TOKEN:
+        print("  Auth: /api/* needs X-Tracker-Token = TRACKER_API_TOKEN (from the environment)")
+    else:
+        api_token()
+        print("  Auth: /api/* needs X-Tracker-Token; the dashboard is served it automatically.")
+        print(f"        Token file: {_config_dir() / API_TOKEN_FILENAME} (change with TRACKER_API_TOKEN).")
     print(f"  Docs: Billing (Settings > Billing), Activity card, B-drawer, Go, Budgets, Inference API cost")
     print(f"  Press Ctrl+C to stop. Use --host 0.0.0.0 to expose to LAN.")
     # Open browser on Windows?

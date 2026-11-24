@@ -337,6 +337,15 @@ const $ = s => document.querySelector(s);
 const $$ = s => document.querySelectorAll(s);
 // Escape untrusted CSV/API values before they enter innerHTML.
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// The server injects the API token into this page for a same-origin, loopback
+// render. /api/* rejects calls without it, so every request goes through here.
+const TRACKER_TOKEN = (document.querySelector('meta[name="tracker-api-token"]') || {}).content || '';
+const apiFetch = (url, opts={}) => {
+  const init = Object.assign({}, opts);
+  init.headers = Object.assign({}, opts.headers || {});
+  if (TRACKER_TOKEN) init.headers['X-Tracker-Token'] = TRACKER_TOKEN;
+  return fetch(url, init);
+};
 
 // Tabs
 $$('.tab-btn').forEach(b=>{
@@ -351,7 +360,7 @@ $$('.tab-btn').forEach(b=>{
 });
 
 // Health
-fetch('/api/health').then(r=>r.json()).then(j=>{
+apiFetch('/api/health').then(r=>r.json()).then(j=>{
   $('#health').textContent = j.db_exists ? 'DB ready' : 'no DB yet';
   $('#health').className = 'badge ' + (j.db_exists?'ok':'');
   $('#dbPathLabel').textContent = j.db_exists ? 'opencode_usage.db' : 'opencode_usage.db (not yet created)';
@@ -360,7 +369,7 @@ fetch('/api/health').then(r=>r.json()).then(j=>{
 
 // Populate models from go-limits
 let MODELS=[];
-fetch('/api/go-limits').then(r=>r.json()).then(j=>{
+apiFetch('/api/go-limits').then(r=>r.json()).then(j=>{
   MODELS = Object.keys(j.limits).sort();
   const sel=$('#logModel');
   sel.innerHTML='';
@@ -393,7 +402,7 @@ $('#checkKeyBtn').addEventListener('click', async()=>{
   const base=selectedBaseUrl();
   $('#keyCheck').textContent='Checking…';
   try{
-    const res=await fetch('/api/key-check', {method:'POST', headers:{'Content-Type':'application/json'},
+    const res=await apiFetch('/api/key-check', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({api_key:key||undefined, profile:profile||undefined, base_url:base})});
     const j=await res.json();
     if(j.ok){
@@ -414,7 +423,7 @@ $('#baseUrl').addEventListener('change',()=>{
 // Profiles: server-side key env names only; keys never leave the browser
 // unless you type one (and then only for that request).
 let PROFILES=[];
-fetch('/api/profiles').then(r=>r.json()).then(j=>{
+apiFetch('/api/profiles').then(r=>r.json()).then(j=>{
   PROFILES=j.profiles||[];
   const sel=$('#profileSelect');
   PROFILES.forEach(p=>{
@@ -466,7 +475,7 @@ $('#mergeBtn').addEventListener('click', async()=>{
   fd.append('billable_only', $('#mergeBillable').checked ? 'true':'false');
   fd.append('dedupe', $('#mergeDedupe').checked ? 'true':'false');
   try{
-    const res=await fetch('/api/merge', {method:'POST', body: fd});
+    const res=await apiFetch('/api/merge', {method:'POST', body: fd});
     const j=await res.json();
     if(!res.ok || !j.ok) throw new Error(j.error || res.statusText);
     // render
@@ -541,7 +550,7 @@ $('#logBtn').addEventListener('click', async()=>{
   $('#logStatus').innerHTML='<div class="alert info">Calling '+esc(baseUrlVal)+' …</div>';
   $('#logResult').style.display='none';
   try{
-    const res=await fetch('/api/log', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const res=await apiFetch('/api/log', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
     const j=await res.json();
     if(!res.ok || !j.ok) throw new Error((j.error||'unknown') + (j.hint? ' — '+j.hint : ''));
     const p=j.parsed||{};
@@ -571,7 +580,7 @@ $('#logBtn').addEventListener('click', async()=>{
 // --- Report ---
 async function loadPlanInfo(){
   try{
-    const res=await fetch('/api/plan');
+    const res=await apiFetch('/api/plan');
     const j=await res.json();
     const recent=(j.history||[]).slice(-3).map(h=>`${h.plan} from ${String(h.effective_from||'').slice(0,10)}`).join(' · ');
     $('#planHistory').textContent=`current: ${j.current||'not set'}${recent? ' | '+recent:''}`;
@@ -580,7 +589,7 @@ async function loadPlanInfo(){
 $('#setPlanBtn').addEventListener('click', async()=>{
   const plan=$('#reportPlan').value||'go';
   try{
-    await fetch('/api/plan', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({plan:plan})});
+    await apiFetch('/api/plan', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({plan:plan})});
     await loadPlanInfo();
     loadReport();
   }catch(e){ $('#planHistory').textContent='save failed: '+e.message; }
@@ -597,7 +606,7 @@ async function loadReport(){
       const value=$(sel).value;
       if(value) params.set(key, value);
     });
-    const res=await fetch('/api/report?'+params.toString());
+    const res=await apiFetch('/api/report?'+params.toString());
     const j=await res.json();
     if(j.empty){ $('#reportStatus').innerHTML=`<div class="alert warn">${esc(j.message || 'No logged requests yet. Use Logger tab or CLI: python tracker.py log --model kimi-k3 --message "hi"')}</div>`; return; }
     $('#reportStatus').innerHTML='';
@@ -657,7 +666,7 @@ $('#filterReset').addEventListener('click',()=>{
     .forEach(sel=>{ $(sel).value=''; });
   loadReport();
 });
-fetch('/api/filters/options').then(r=>r.json()).then(j=>{
+apiFetch('/api/filters/options').then(r=>r.json()).then(j=>{
   const fill=(id, values)=>{
     const sel=$(id);
     (values||[]).forEach(value=>{
@@ -677,7 +686,7 @@ $('#importSessionsBtn').addEventListener('click', async()=>{
   btn.disabled=true; btn.textContent='Importing…';
   $('#importSessionsStatus').textContent='';
   try{
-    const res=await fetch('/api/import-sessions', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({})});
+    const res=await apiFetch('/api/import-sessions', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({})});
     const j=await res.json();
     if(!res.ok || !j.ok) throw new Error(j.error||'import failed');
     $('#importSessionsStatus').innerHTML=`<span class="badge ok">imported</span> ${esc(j.sessions_imported)} sessions · ${esc(j.messages_imported)} messages · ${esc(j.duplicates_skipped)} dupes`;
@@ -795,11 +804,11 @@ async function loadInsights(){
   if(to) fparams.set('to',to);
   try{
     const [res, fres, sres, ares, tres]=await Promise.all([
-      fetch('/api/analytics?'+params.toString()),
-      fetch('/api/forecast?'+fparams.toString()),
-      fetch('/api/plan-sim?'+fparams.toString()),
-      fetch('/api/anomalies?'+params.toString()),
-      fetch('/api/attribution?'+new URLSearchParams({
+      apiFetch('/api/analytics?'+params.toString()),
+      apiFetch('/api/forecast?'+fparams.toString()),
+      apiFetch('/api/plan-sim?'+fparams.toString()),
+      apiFetch('/api/anomalies?'+params.toString()),
+      apiFetch('/api/attribution?'+new URLSearchParams({
         by:$('#insightsBy').value||'project',
         ...(from?{from:from}:{}), ...(to?{to:to}:{})
       }).toString()),

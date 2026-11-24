@@ -18,6 +18,8 @@ def app_module(tmp_path, monkeypatch):
     monkeypatch.setattr(module, "DB_PATH", tmp_path / "api.db")
     monkeypatch.setattr(module, "CSV_PATH", tmp_path / "api.csv")
     monkeypatch.setattr(module, "PERIOD_START_DAY", 1)
+    # /api/* is token-gated by default; these tests exercise route behaviour.
+    monkeypatch.setattr(module, "API_TOKEN", "test-token")
     module.app.config.update(TESTING=True)
     return module
 
@@ -25,6 +27,7 @@ def app_module(tmp_path, monkeypatch):
 @pytest.fixture()
 def client(app_module):
     with app_module.app.test_client() as test_client:
+        test_client.environ_base["HTTP_X_TRACKER_TOKEN"] = app_module.API_TOKEN
         yield test_client
 
 
